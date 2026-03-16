@@ -26,28 +26,36 @@ export const fetchPost = createServerFn({ method: "GET" })
   })
 
 export const createPost = createServerFn({ method: "POST" })
-  .inputValidator((data: { content: string; scheduled_at?: string }) => data)
+  .inputValidator(
+    (data: { title: string; content: string; subreddit: string; scheduled_at?: string }) => data,
+  )
   .handler(async ({ data }) => {
     const db = getDb()
     const id = randomUUID()
     const now = new Date().toISOString()
 
     db.prepare(
-      "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
-    ).run(id, data.content, data.scheduled_at ?? null, now, now)
+      "INSERT INTO posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
+    ).run(id, data.title, data.content, data.subreddit, data.scheduled_at ?? null, now, now)
 
     return db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
   })
 
 export const updatePost = createServerFn({ method: "POST" })
   .inputValidator(
-    (data: { post_id: string; content: string; scheduled_at?: string | null }) => data,
+    (data: {
+      post_id: string
+      title: string
+      content: string
+      subreddit: string
+      scheduled_at?: string | null
+    }) => data,
   )
   .handler(async ({ data }) => {
     const db = getDb()
     db.prepare(
-      "UPDATE posts SET content = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
-    ).run(data.content, data.scheduled_at ?? null, data.post_id)
+      "UPDATE posts SET title = ?, content = ?, subreddit = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
+    ).run(data.title, data.content, data.subreddit, data.scheduled_at ?? null, data.post_id)
     return db.prepare("SELECT * FROM posts WHERE id = ?").get(data.post_id) as PostRecord
   })
 
@@ -65,7 +73,9 @@ export const publishPost = createServerFn({ method: "POST" })
 
     const jobId = enqueuePublish({
       post_id: post.id,
+      title: post.title,
       content: post.content,
+      subreddit: post.subreddit,
       holaboss_user_id: userId,
       scheduled_at: post.scheduled_at,
     })

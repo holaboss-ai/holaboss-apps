@@ -1,126 +1,123 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router"
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 
-import { createPost, deletePost, fetchPosts, publishPost } from "../server/actions"
+import { Button } from "../components/ui/button"
+import { createPost, fetchPosts } from "../server/actions"
+
+const statusFilters = ["all", "draft", "scheduled", "queued", "published", "failed"] as const
+
+const statusStyles: Record<string, string> = {
+  draft: "bg-yellow-500/10 text-yellow-600",
+  queued: "bg-blue-500/10 text-blue-600",
+  published: "bg-green-500/10 text-green-600",
+  failed: "bg-red-500/10 text-red-600",
+  scheduled: "bg-purple-500/10 text-purple-600",
+}
 
 export const Route = createFileRoute("/")({
-  component: HomePage,
+  component: PostsPage,
   loader: () => fetchPosts(),
+  validateSearch: (search: Record<string, unknown>) => ({
+    status: (search.status as string) || "all",
+  }),
 })
 
-function HomePage() {
+function PostsPage() {
   const posts = Route.useLoaderData()
-  const router = useRouter()
-  const [content, setContent] = useState("")
-  const [loading, setLoading] = useState(false)
+  const { status } = Route.useSearch()
+  const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!content.trim() || loading) return
-    setLoading(true)
+  const filtered =
+    status === "all" ? posts : posts.filter((p) => p.status === status)
+
+  async function handleNewPost() {
+    if (creating) return
+    setCreating(true)
     try {
-      await createPost({ data: { content } })
-      setContent("")
-      router.invalidate()
+      const post = await createPost({ data: { content: "" } })
+      navigate({ to: "/posts/$postId", params: { postId: post.id } })
     } finally {
-      setLoading(false)
+      setCreating(false)
     }
-  }
-
-  async function handlePublish(postId: string) {
-    await publishPost({ data: { post_id: postId } })
-    router.invalidate()
-  }
-
-  async function handleDelete(postId: string) {
-    await deletePost({ data: { post_id: postId } })
-    router.invalidate()
-  }
-
-  const statusColors: Record<string, string> = {
-    draft: "bg-yellow-500/10 text-yellow-600",
-    queued: "bg-blue-500/10 text-blue-600",
-    published: "bg-green-500/10 text-green-600",
-    failed: "bg-red-500/10 text-red-600",
-    scheduled: "bg-purple-500/10 text-purple-600",
   }
 
   return (
     <div className="mx-auto max-w-2xl p-6">
-      {/* TODO: Replace with your module name */}
-      <h1 className="mb-1 text-2xl font-semibold">Module Template</h1>
-      <p className="text-muted-foreground mb-6 text-sm">
-        Create, manage, and publish content
-      </p>
-
-      <form onSubmit={handleCreate} className="mb-8">
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="What's happening?"
-          className="border-border bg-card focus:ring-ring w-full resize-none rounded-lg border p-3 text-sm focus:ring-2 focus:outline-none"
-          rows={3}
-          maxLength={280}
-        />
-        <div className="mt-2 flex items-center justify-between">
-          <span
-            className={`text-xs ${content.length > 260 ? "text-red-500" : "text-muted-foreground"}`}
-          >
-            {content.length}/280
-          </span>
-          <button
-            type="submit"
-            disabled={!content.trim() || loading}
-            className="bg-primary text-primary-foreground disabled:opacity-50 rounded-md px-4 py-2 text-sm font-medium"
-          >
-            {loading ? "Creating..." : "Create Draft"}
-          </button>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          {/* TODO: Replace with your module name */}
+          <h1 className="text-xl font-semibold">Module Template</h1>
+          <p className="text-muted-foreground text-sm">Manage your posts</p>
         </div>
-      </form>
+        <Button onClick={handleNewPost} disabled={creating} size="sm">
+          {creating ? "Creating..." : "+ New Post"}
+        </Button>
+      </div>
 
-      <div className="space-y-3">
-        {posts.map((post) => (
-          <div key={post.id} className="border-border rounded-lg border p-4">
-            <p className="mb-3 text-sm whitespace-pre-wrap">{post.content}</p>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[post.status] ?? ""}`}
-                >
-                  {post.status}
+      <div className="mb-4 flex gap-1 border-b border-border">
+        {statusFilters.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => navigate({ search: { status: s } })}
+            className={`px-3 py-2 text-xs capitalize transition-colors ${
+              status === s
+                ? "border-b-2 border-foreground font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        {filtered.map((post) => (
+          <Link
+            key={post.id}
+            to="/posts/$postId"
+            params={{ postId: post.id }}
+            className="block rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
+          >
+            <p className="mb-2 line-clamp-2 text-sm whitespace-pre-wrap">
+              {post.content || (
+                <span className="text-muted-foreground italic">Empty draft</span>
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[post.status] ?? ""}`}
+              >
+                {post.status}
+              </span>
+              {post.scheduled_at && (
+                <span className="text-muted-foreground text-xs">
+                  {new Date(post.scheduled_at).toLocaleString()}
                 </span>
+              )}
+              {post.published_at && (
+                <span className="text-muted-foreground text-xs">
+                  {new Date(post.published_at).toLocaleString()}
+                </span>
+              )}
+              {!post.scheduled_at && !post.published_at && (
                 <span className="text-muted-foreground text-xs">
                   {new Date(post.created_at).toLocaleString()}
                 </span>
-              </div>
-              <div className="flex gap-2">
-                {post.status === "draft" && (
-                  <button
-                    type="button"
-                    onClick={() => handlePublish(post.id)}
-                    className="bg-primary text-primary-foreground rounded px-3 py-1 text-xs font-medium"
-                  >
-                    Publish
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => handleDelete(post.id)}
-                  className="text-muted-foreground hover:text-foreground rounded px-2 py-1 text-xs"
-                >
-                  Delete
-                </button>
-              </div>
+              )}
             </div>
             {post.error_message && (
-              <p className="mt-2 text-xs text-red-500">{post.error_message}</p>
+              <p className="mt-1 text-xs text-destructive">{post.error_message}</p>
             )}
-          </div>
+          </Link>
         ))}
 
-        {posts.length === 0 && (
-          <p className="text-muted-foreground py-8 text-center text-sm">
-            No posts yet. Create your first draft above.
+        {filtered.length === 0 && (
+          <p className="text-muted-foreground py-12 text-center text-sm">
+            {status === "all"
+              ? "No posts yet. Create your first post."
+              : `No ${status} posts.`}
           </p>
         )}
       </div>

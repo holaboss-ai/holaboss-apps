@@ -14,6 +14,17 @@ export const fetchPosts = createServerFn({ method: "GET" }).handler(
   },
 )
 
+export const fetchPost = createServerFn({ method: "GET" })
+  .inputValidator((data: { post_id: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb()
+    const post = db
+      .prepare("SELECT * FROM posts WHERE id = ?")
+      .get(data.post_id) as PostRecord | undefined
+    if (!post) throw new Error("Post not found")
+    return post
+  })
+
 export const createPost = createServerFn({ method: "POST" })
   .inputValidator((data: { content: string; scheduled_at?: string }) => data)
   .handler(async ({ data }) => {
@@ -28,6 +39,18 @@ export const createPost = createServerFn({ method: "POST" })
     return db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
   })
 
+export const updatePost = createServerFn({ method: "POST" })
+  .inputValidator(
+    (data: { post_id: string; content: string; scheduled_at?: string | null }) => data,
+  )
+  .handler(async ({ data }) => {
+    const db = getDb()
+    db.prepare(
+      "UPDATE posts SET content = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
+    ).run(data.content, data.scheduled_at ?? null, data.post_id)
+    return db.prepare("SELECT * FROM posts WHERE id = ?").get(data.post_id) as PostRecord
+  })
+
 export const publishPost = createServerFn({ method: "POST" })
   .inputValidator((data: { post_id: string }) => data)
   .handler(async ({ data }) => {
@@ -40,18 +63,35 @@ export const publishPost = createServerFn({ method: "POST" })
 
     const userId = process.env.HOLABOSS_USER_ID ?? ""
 
-    const jobId = await enqueuePublish({
+    const jobId = enqueuePublish({
       post_id: post.id,
       content: post.content,
       holaboss_user_id: userId,
       scheduled_at: post.scheduled_at,
     })
 
-    db.prepare(
-      "UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?",
-    ).run(post.id)
+    const isScheduled =
+      post.scheduled_at && new Date(post.scheduled_at).getTime() > Date.now()
+    const newStatus = isScheduled ? "scheduled" : "queued"
 
-    return { job_id: jobId, status: "queued" as const }
+    db.prepare(
+      "UPDATE posts SET status = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(newStatus, post.id)
+
+    return { job_id: jobId, status: newStatus }
+  })
+
+export const cancelSchedule = createServerFn({ method: "POST" })
+  .inputValidator((data: { post_id: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb()
+    db.prepare(
+      "UPDATE jobs SET status = 'failed', error_message = 'Cancelled by user', updated_at = datetime('now') WHERE json_extract(payload, '$.post_id') = ? AND status IN ('waiting', 'delayed')",
+    ).run(data.post_id)
+    db.prepare(
+      "UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?",
+    ).run(data.post_id)
+    return db.prepare("SELECT * FROM posts WHERE id = ?").get(data.post_id) as PostRecord
   })
 
 export const deletePost = createServerFn({ method: "POST" })

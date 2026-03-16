@@ -35,7 +35,7 @@ function PostsPage() {
     if (creating) return
     setCreating(true)
     try {
-      const post = await createPost({ data: { content: "" } })
+      const post = await createPost({ data: { title: "", content: "", subreddit: "" } })
       navigate({ to: "/posts/$postId", params: { postId: post.id } })
     } finally {
       setCreating(false)
@@ -46,7 +46,7 @@ function PostsPage() {
     <div className="mx-auto max-w-2xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Twitter/X</h1>
+          <h1 className="text-xl font-semibold">Reddit</h1>
           <p className="text-muted-foreground text-sm">Manage your posts</p>
         </div>
         <Button onClick={handleNewPost} disabled={creating} size="sm">
@@ -79,11 +79,23 @@ function PostsPage() {
             params={{ postId: post.id }}
             className="block rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
           >
-            <p className="mb-2 line-clamp-2 text-sm whitespace-pre-wrap">
-              {post.content || (
-                <span className="text-muted-foreground italic">Empty draft</span>
+            <div className="mb-1 flex items-center gap-2">
+              {post.subreddit && (
+                <span className="text-muted-foreground text-xs font-medium">
+                  r/{post.subreddit}
+                </span>
+              )}
+            </div>
+            <p className="mb-1 line-clamp-1 text-sm font-medium">
+              {post.title || (
+                <span className="text-muted-foreground italic font-normal">Untitled</span>
               )}
             </p>
+            {post.content && (
+              <p className="text-muted-foreground mb-2 line-clamp-1 text-xs">
+                {post.content}
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[post.status] ?? ""}`}

@@ -46,7 +46,7 @@ function PostsPage() {
     <div className="mx-auto max-w-2xl p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Twitter/X</h1>
+          <h1 className="text-xl font-semibold">LinkedIn</h1>
           <p className="text-muted-foreground text-sm">Manage your posts</p>
         </div>
         <Button onClick={handleNewPost} disabled={creating} size="sm">

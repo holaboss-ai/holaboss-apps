@@ -1,0 +1,30 @@
+app_id: "linkedin-module"
+name: "LinkedIn"
+slug: "linkedin"
+
+services:
+  app:
+    build: "npm run build"
+    start: "npm run start"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 10
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp
+
+integration:
+  destination: "linkedin"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_USER_ID"
+  - "PLATFORM_INTEGRATION_TOKEN"
+  - "WORKSPACE_API_URL"
+  - "WORKSPACE_LINKEDIN_INTEGRATION_ID"
