@@ -5,8 +5,8 @@ slug: "template"
 
 lifecycle:
   setup: "npm install && npm run build"
-  start: "PORT=8080 MCP_PORT=3099 DB_PATH=./data/module.db nohup npm run start > /tmp/module-template.log 2>&1 &"
-  stop: "kill $(lsof -t -i :8080 -i :3099 2>/dev/null) 2>/dev/null || true"
+  start: "DB_PATH=./data/module.db nohup npm run start > /tmp/module-template.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
 
 healthchecks:
   mcp:
