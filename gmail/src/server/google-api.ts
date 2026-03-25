@@ -1,0 +1,90 @@
+const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+function getToken(): string {
+  const token = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
+  if (!token) throw new Error("PLATFORM_INTEGRATION_TOKEN is not set")
+  return token
+}
+
+function headers(): Record<string, string> {
+  return { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" }
+}
+
+async function gfetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, headers: { ...headers(), ...init?.headers } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`Gmail API error (${res.status}): ${text.slice(0, 500)}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export interface GmailMessage {
+  id: string
+  threadId: string
+  snippet: string
+  payload: {
+    headers: Array<{ name: string; value: string }>
+    mimeType: string
+    body?: { data?: string; size: number }
+    parts?: Array<{ mimeType: string; body?: { data?: string; size: number }; parts?: Array<{ mimeType: string; body?: { data?: string } }> }>
+  }
+  internalDate: string
+}
+
+export interface GmailThread { id: string; messages: GmailMessage[] }
+
+export async function listThreads(query: string, maxResults = 10): Promise<Array<{ id: string; snippet: string }>> {
+  const q = encodeURIComponent(query)
+  const data = await gfetch<{ threads?: Array<{ id: string; snippet: string }> }>(`${GMAIL_BASE}/threads?q=${q}&maxResults=${maxResults}`)
+  return data.threads ?? []
+}
+
+export async function getThread(threadId: string): Promise<GmailThread> {
+  return gfetch<GmailThread>(`${GMAIL_BASE}/threads/${threadId}?format=full`)
+}
+
+function extractHeader(msg: GmailMessage, name: string): string {
+  return msg.payload.headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? ""
+}
+
+function decodeBase64Url(data: string): string {
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8")
+}
+
+function extractBody(msg: GmailMessage): string {
+  if (msg.payload.body?.data) return decodeBase64Url(msg.payload.body.data)
+  if (msg.payload.parts) {
+    for (const part of msg.payload.parts) {
+      if (part.mimeType === "text/plain" && part.body?.data) return decodeBase64Url(part.body.data)
+      if (part.parts) { for (const sub of part.parts) { if (sub.mimeType === "text/plain" && sub.body?.data) return decodeBase64Url(sub.body.data) } }
+    }
+    for (const part of msg.payload.parts) {
+      if (part.mimeType === "text/html" && part.body?.data) return decodeBase64Url(part.body.data)
+    }
+  }
+  return ""
+}
+
+export interface ParsedMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; body: string; snippet: string; messageId: string }
+
+export function parseMessage(msg: GmailMessage): ParsedMessage {
+  return { id: msg.id, threadId: msg.threadId, from: extractHeader(msg, "From"), to: extractHeader(msg, "To"), subject: extractHeader(msg, "Subject"), date: extractHeader(msg, "Date"), body: extractBody(msg), snippet: msg.snippet, messageId: extractHeader(msg, "Message-ID") }
+}
+
+export async function sendEmail(params: { to: string; subject: string; body: string; threadId?: string; inReplyTo?: string; references?: string }): Promise<{ id: string; threadId: string }> {
+  const lines = [`To: ${params.to}`, `Subject: ${params.subject}`, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0"]
+  if (params.inReplyTo) lines.push(`In-Reply-To: ${params.inReplyTo}`)
+  if (params.references) lines.push(`References: ${params.references}`)
+  lines.push("", params.body)
+  const raw = Buffer.from(lines.join("\r\n")).toString("base64url")
+  const payload: Record<string, string> = { raw }
+  if (params.threadId) payload.threadId = params.threadId
+  return gfetch<{ id: string; threadId: string }>(`${GMAIL_BASE}/messages/send`, { method: "POST", body: JSON.stringify(payload) })
+}
+
+export async function searchEmails(query: string, maxResults = 10): Promise<Array<{ id: string; threadId: string; snippet: string }>> {
+  const q = encodeURIComponent(query)
+  const data = await gfetch<{ messages?: Array<{ id: string; threadId: string; snippet: string }> }>(`${GMAIL_BASE}/messages?q=${q}&maxResults=${maxResults}`)
+  return data.messages ?? []
+}

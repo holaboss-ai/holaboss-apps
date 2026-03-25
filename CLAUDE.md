@@ -131,6 +131,16 @@ curl localhost:3099/mcp/health    # MCP server
 
 Single container per module. Data persisted in `module-data` volume at `/app/data/module.db`.
 
+### Sandbox deployment (app.runtime.yaml)
+
+Modules are deployed into Holaboss sandbox containers via `app.runtime.yaml`. The sandbox runs on Docker overlay FS which has known issues with npm:
+
+- **Always `rm -rf node_modules` before `npm install`** — overlay FS causes `ENOTEMPTY` errors when npm tries to remove existing `node_modules`
+- **Use `--maxsockets 1`** — npm's parallel tar extraction races with overlay FS, causing `ENOENT` / `TAR_ENTRY_ERROR`. Serial downloads avoid this.
+- **Standard setup command**: `rm -rf node_modules && npm install --maxsockets 1 && npm run build`
+- **MCP path** must be `/mcp/sse` (not `/mcp`)
+- **Start command** must launch both the web server and services process (`start-services.ts`)
+
 ## Key Conventions
 
 - **No shared packages** — each module is fully self-contained; copy-paste is preferred over abstraction
