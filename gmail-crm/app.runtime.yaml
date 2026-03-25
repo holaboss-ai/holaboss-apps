@@ -1,0 +1,31 @@
+app_id: "gmail-crm"
+name: "Gmail CRM"
+slug: "gmail-crm"
+
+lifecycle:
+  setup: "rm -rf node_modules && npm install --maxsockets 1 && npm run build"
+  start: "DB_PATH=./data/module.db nohup npm run start > /tmp/gmail-crm.log 2>&1 & DB_PATH=./data/module.db nohup npx tsx src/server/start-services.ts > /tmp/gmail-crm-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+
+integration:
+  destination: "google"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_USER_ID"
+  - "PLATFORM_INTEGRATION_TOKEN"
+  - "WORKSPACE_API_URL"
+  - "WORKSPACE_GOOGLE_INTEGRATION_ID"
+  - "GMAIL_CRM_SHEET_ID"
