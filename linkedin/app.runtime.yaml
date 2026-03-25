@@ -3,7 +3,7 @@ name: "LinkedIn"
 slug: "linkedin"
 
 lifecycle:
-  setup: "npm ci && npm run build"
+  setup: "rm -rf node_modules && npm install && npm run build"
   start: "DB_PATH=./data/module.db nohup npm run start > /tmp/linkedin-module.log 2>&1 & DB_PATH=./data/module.db nohup npx tsx src/server/start-services.ts > /tmp/linkedin-services.log 2>&1 &"
   stop: "kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
 
