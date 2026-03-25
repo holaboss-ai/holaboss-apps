@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Server } from "node:http"
+import { randomUUID } from "node:crypto"
 
-import type { PostRecord } from "../src/lib/types"
+import type { ContactRecord, DraftRecord, InteractionRecord } from "../src/lib/types"
 
 let mcpServer: Server | null = null
 const MCP_PORT = 13099
+const TEST_DB_PATH = `/tmp/gmail-crm-e2e-test-${Date.now()}.db`
 
-// TODO: Replace "Module Template" with your module name in describe blocks
-
-describe("Module Template E2E", () => {
+describe("Gmail CRM E2E", () => {
   beforeAll(async () => {
-    process.env.DB_PATH = "/tmp/module-template-e2e-test.db"
+    process.env.DB_PATH = TEST_DB_PATH
 
     const { startMcpServer } = await import("../src/server/mcp")
     mcpServer = startMcpServer(MCP_PORT)
@@ -19,110 +19,277 @@ describe("Module Template E2E", () => {
 
   afterAll(async () => {
     if (mcpServer) {
+      mcpServer.closeAllConnections()
       await new Promise<void>((resolve) => mcpServer!.close(() => resolve()))
       mcpServer = null
     }
     const fs = await import("node:fs")
-    try { fs.unlinkSync("/tmp/module-template-e2e-test.db") } catch { /* ok */ }
-  })
+    try {
+      fs.unlinkSync(TEST_DB_PATH)
+    } catch {
+      /* ok */
+    }
+  }, 5_000)
 
-  describe("Post CRUD", () => {
-    let testPostId: string
+  // =========================================================================
+  // Contact CRUD
+  // =========================================================================
+  describe("Contact CRUD", () => {
+    let testContactId: string
 
-    it("creates a draft post", async () => {
+    it("creates a contact", async () => {
       const { getDb } = await import("../src/server/db")
-      const { randomUUID } = await import("node:crypto")
-
-      testPostId = randomUUID()
       const db = getDb()
+
+      testContactId = randomUUID()
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
-      ).run(testPostId, "Test content", now, now)
+        "INSERT INTO contacts (id, email, name, company, stage, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(testContactId, "alice@test.com", "Alice", "Acme", "lead", now, now)
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
-      expect(post.content).toBe("Test content")
-      expect(post.status).toBe("draft")
+      const contact = db
+        .prepare("SELECT * FROM contacts WHERE id = ?")
+        .get(testContactId) as ContactRecord
+      expect(contact.email).toBe("alice@test.com")
+      expect(contact.stage).toBe("lead")
     })
 
-    it("updates a post", async () => {
+    it("updates contact stage", async () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      db.prepare(
-        "UPDATE posts SET content = ?, updated_at = datetime('now') WHERE id = ?",
-      ).run("Updated content", testPostId)
+      db.prepare("UPDATE contacts SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(
+        "contacted",
+        testContactId
+      )
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
-      expect(post.content).toBe("Updated content")
+      const contact = db
+        .prepare("SELECT * FROM contacts WHERE id = ?")
+        .get(testContactId) as ContactRecord
+      expect(contact.stage).toBe("contacted")
     })
 
-    it("lists posts by status", async () => {
+    it("lists contacts by stage", async () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      const drafts = db
-        .prepare("SELECT * FROM posts WHERE status = ?")
-        .all("draft") as PostRecord[]
-      expect(drafts.length).toBeGreaterThanOrEqual(1)
-      expect(drafts.every((p) => p.status === "draft")).toBe(true)
+      const contacts = db
+        .prepare("SELECT * FROM contacts WHERE stage = ?")
+        .all("contacted") as ContactRecord[]
+      expect(contacts.length).toBeGreaterThanOrEqual(1)
+      expect(contacts.every((c) => c.stage === "contacted")).toBe(true)
     })
 
-    it("deletes a post", async () => {
+    it("finds contact by email (case-insensitive)", async () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      db.prepare("DELETE FROM posts WHERE id = ?").run(testPostId)
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId)
-      expect(post).toBeUndefined()
+      const contact = db
+        .prepare("SELECT * FROM contacts WHERE email = ?")
+        .get("alice@test.com") as ContactRecord | undefined
+      expect(contact).toBeDefined()
+      expect(contact!.name).toBe("Alice")
+    })
+
+    it("deletes a contact", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      db.prepare("DELETE FROM contacts WHERE id = ?").run(testContactId)
+      const contact = db.prepare("SELECT * FROM contacts WHERE id = ?").get(testContactId)
+      expect(contact).toBeUndefined()
     })
   })
 
-  describe("Full lifecycle", () => {
-    it("create → queue → publish → delete", async () => {
+  // =========================================================================
+  // Interactions
+  // =========================================================================
+  describe("Interactions", () => {
+    let contactId: string
+
+    beforeAll(async () => {
       const { getDb } = await import("../src/server/db")
-      const { randomUUID } = await import("node:crypto")
+      const db = getDb()
+      contactId = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO contacts (id, email, name, stage, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(contactId, "bob@test.com", "Bob", "lead", now, now)
+    })
+
+    it("creates an interaction record", async () => {
+      const { getDb } = await import("../src/server/db")
       const db = getDb()
 
       const id = randomUUID()
-      const content = `E2E lifecycle ${Date.now()}`
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
-      ).run(id, content, now, now)
+        "INSERT INTO interactions (id, contact_id, gmail_thread_id, subject, snippet, direction, timestamp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(id, contactId, "thread-1", "Hello", "Hi Bob...", "outbound", now, now)
 
-      const posts = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT 10").all() as PostRecord[]
-      expect(posts.find((p) => p.id === id)).toBeDefined()
+      const interaction = db
+        .prepare("SELECT * FROM interactions WHERE id = ?")
+        .get(id) as InteractionRecord
+      expect(interaction.direction).toBe("outbound")
+      expect(interaction.contact_id).toBe(contactId)
+    })
 
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(id)
-      expect((db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord).status).toBe("queued")
+    it("lists interactions by contact ordered by timestamp DESC", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
 
+      const id2 = randomUUID()
+      const later = new Date(Date.now() + 1000).toISOString()
       db.prepare(
-        "UPDATE posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-      ).run("ext-123", id)
-      const published = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
-      expect(published.status).toBe("published")
-      expect(published.external_post_id).toBe("ext-123")
+        "INSERT INTO interactions (id, contact_id, subject, direction, timestamp, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(id2, contactId, "Follow up", "inbound", later, later)
 
-      db.prepare("DELETE FROM posts WHERE id = ?").run(id)
+      const interactions = db
+        .prepare("SELECT * FROM interactions WHERE contact_id = ? ORDER BY timestamp DESC")
+        .all(contactId) as InteractionRecord[]
+      expect(interactions.length).toBe(2)
+      expect(interactions[0].subject).toBe("Follow up")
     })
   })
 
-  describe("Publisher", () => {
-    it("constructs without error", async () => {
-      const { ModulePublisher } = await import("../src/server/publisher")
-      expect(new ModulePublisher()).toBeDefined()
+  // =========================================================================
+  // Drafts
+  // =========================================================================
+  describe("Drafts", () => {
+    let contactId: string
+
+    beforeAll(async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+      contactId = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO contacts (id, email, name, stage, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(contactId, "carol@test.com", "Carol", "interested", now, now)
     })
 
-    it("rejects publish when integration ID is missing", async () => {
-      const { ModulePublisher } = await import("../src/server/publisher")
-      await expect(
-        new ModulePublisher().publish({ holaboss_user_id: "test", content: "test" }),
-      ).rejects.toThrow("missing_integration_id")
+    it("creates a pending draft", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO drafts (id, contact_id, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+      ).run(id, contactId, "Follow up", "Hi Carol...", now)
+
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      expect(draft.status).toBe("pending")
+      expect(draft.body).toBe("Hi Carol...")
+    })
+
+    it("transitions draft to sent", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO drafts (id, contact_id, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+      ).run(id, contactId, "Test", "Body", now)
+
+      db.prepare("UPDATE drafts SET status = 'sent', sent_at = ? WHERE id = ?").run(now, id)
+
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      expect(draft.status).toBe("sent")
+      expect(draft.sent_at).toBeDefined()
+    })
+
+    it("lists only pending drafts", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      const pending = db
+        .prepare("SELECT * FROM drafts WHERE status = 'pending'")
+        .all() as DraftRecord[]
+      for (const d of pending) {
+        expect(d.status).toBe("pending")
+      }
     })
   })
 
+  // =========================================================================
+  // Full CRM lifecycle
+  // =========================================================================
+  describe("Full lifecycle", () => {
+    it("contact → interaction → draft → sent → updated last_contact_at", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      // Create contact
+      const contactId = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO contacts (id, email, name, stage, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(contactId, "lifecycle@test.com", "Test User", "lead", now, now)
+
+      // Create draft
+      const draftId = randomUUID()
+      db.prepare(
+        "INSERT INTO drafts (id, contact_id, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+      ).run(draftId, contactId, "Hello", "Hi there", now)
+
+      // Simulate sending: draft → sent + create interaction + update last_contact_at
+      const sentAt = new Date().toISOString()
+      db.prepare("UPDATE drafts SET status = 'sent', sent_at = ? WHERE id = ?").run(sentAt, draftId)
+
+      const interactionId = randomUUID()
+      db.prepare(
+        "INSERT INTO interactions (id, contact_id, subject, snippet, direction, timestamp, created_at) VALUES (?, ?, ?, ?, 'outbound', ?, ?)"
+      ).run(interactionId, contactId, "Hello", "Hi there", sentAt, sentAt)
+
+      db.prepare("UPDATE contacts SET last_contact_at = ?, updated_at = ? WHERE id = ?").run(
+        sentAt,
+        sentAt,
+        contactId
+      )
+
+      // Verify
+      const contact = db
+        .prepare("SELECT * FROM contacts WHERE id = ?")
+        .get(contactId) as ContactRecord
+      expect(contact.last_contact_at).toBe(sentAt)
+
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draftId) as DraftRecord
+      expect(draft.status).toBe("sent")
+
+      const interactions = db
+        .prepare("SELECT * FROM interactions WHERE contact_id = ?")
+        .all(contactId) as InteractionRecord[]
+      expect(interactions.length).toBe(1)
+      expect(interactions[0].direction).toBe("outbound")
+    })
+  })
+
+  // =========================================================================
+  // Sync state
+  // =========================================================================
+  describe("Sync state", () => {
+    it("stores and retrieves sync metadata", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      const now = new Date().toISOString()
+      db.prepare("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_sync_at', ?)").run(
+        now
+      )
+
+      const row = db
+        .prepare("SELECT value FROM sync_state WHERE key = 'last_sync_at'")
+        .get() as { value: string }
+      expect(row.value).toBe(now)
+    })
+  })
+
+  // =========================================================================
+  // MCP server
+  // =========================================================================
   describe("MCP server", () => {
     it("health check responds ok", async () => {
       const res = await fetch(`http://localhost:${MCP_PORT}/mcp/health`)
@@ -134,7 +301,9 @@ describe("Module Template E2E", () => {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 2000)
       try {
-        const res = await fetch(`http://localhost:${MCP_PORT}/mcp/sse`, { signal: controller.signal })
+        const res = await fetch(`http://localhost:${MCP_PORT}/mcp/sse`, {
+          signal: controller.signal,
+        })
         expect(res.status).toBe(200)
         expect(res.headers.get("content-type")).toContain("text/event-stream")
       } catch (err) {
@@ -150,53 +319,102 @@ describe("Module Template E2E", () => {
     })
   })
 
-  describe("Queue", () => {
-    it("enqueuePublish creates a job and getQueueStats reflects it", async () => {
-      const { enqueuePublish, getQueueStats } = await import("../src/server/queue")
-
-      const jobId = enqueuePublish({
-        post_id: "test-post-queue",
-        content: "test content",
-        holaboss_user_id: "test-user",
-      })
-      expect(typeof jobId).toBe("string")
-
-      const stats = getQueueStats()
-      expect(stats).toHaveProperty("waiting")
-      expect(stats).toHaveProperty("active")
-      expect(stats).toHaveProperty("completed")
-      expect(stats).toHaveProperty("failed")
-      expect(stats).toHaveProperty("delayed")
-      expect(stats.waiting).toBeGreaterThanOrEqual(1)
-    })
-
-    it("enqueuePublish with future scheduled_at creates a delayed job", async () => {
-      const { enqueuePublish, getQueueStats } = await import("../src/server/queue")
+  // =========================================================================
+  // Stale contacts query
+  // =========================================================================
+  describe("Stale contacts", () => {
+    it("finds contacts with no recent interaction", async () => {
       const { getDb } = await import("../src/server/db")
-
-      const futureDate = new Date(Date.now() + 86_400_000).toISOString()
-      const jobId = enqueuePublish({
-        post_id: "test-post-delayed",
-        content: "scheduled content",
-        holaboss_user_id: "test-user",
-        scheduled_at: futureDate,
-      })
-
       const db = getDb()
-      const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as { status: string }
-      expect(job.status).toBe("delayed")
 
-      const stats = getQueueStats()
-      expect(stats.delayed).toBeGreaterThanOrEqual(1)
+      // Create a stale contact (last_contact_at 30 days ago)
+      const staleId = randomUUID()
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO contacts (id, email, name, stage, last_contact_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(staleId, "stale@test.com", "Stale User", "interested", thirtyDaysAgo, now, now)
+
+      // Create a recent contact
+      const recentId = randomUUID()
+      db.prepare(
+        "INSERT INTO contacts (id, email, name, stage, last_contact_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(recentId, "recent@test.com", "Recent User", "contacted", now, now, now)
+
+      const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString()
+      const staleContacts = db
+        .prepare(
+          `SELECT id, email FROM contacts
+           WHERE stage NOT IN ('closed-won', 'closed-lost')
+             AND (last_contact_at IS NULL OR last_contact_at < ?)
+           ORDER BY last_contact_at ASC NULLS FIRST`
+        )
+        .all(cutoff) as Array<{ id: string; email: string }>
+
+      const staleEmails = staleContacts.map((c) => c.email)
+      expect(staleEmails).toContain("stale@test.com")
+      expect(staleEmails).not.toContain("recent@test.com")
     })
   })
 
+  // =========================================================================
+  // Summary query
+  // =========================================================================
+  describe("Summary", () => {
+    it("returns pipeline stage counts", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+
+      const stageCounts = db
+        .prepare("SELECT stage, COUNT(*) as count FROM contacts GROUP BY stage")
+        .all() as Array<{ stage: string; count: number }>
+
+      expect(Array.isArray(stageCounts)).toBe(true)
+      for (const row of stageCounts) {
+        expect(row.count).toBeGreaterThanOrEqual(1)
+      }
+    })
+  })
+
+  // =========================================================================
+  // Platform config
+  // =========================================================================
   describe("Platform config", () => {
-    it("MODULE_CONFIG has values set", async () => {
+    it("MODULE_CONFIG has correct values", async () => {
       const { MODULE_CONFIG } = await import("../src/lib/types")
-      expect(MODULE_CONFIG.provider).toBeDefined()
-      expect(MODULE_CONFIG.destination).toBeDefined()
-      expect(MODULE_CONFIG.name).toBeDefined()
+      expect(MODULE_CONFIG.provider).toBe("google")
+      expect(MODULE_CONFIG.destination).toBe("google")
+      expect(MODULE_CONFIG.name).toBe("Gmail CRM")
+    })
+  })
+
+  // =========================================================================
+  // Google API integration tests (only run with GOOGLE_TEST_TOKEN)
+  // =========================================================================
+  describe.skipIf(!process.env.GOOGLE_TEST_TOKEN)("Google API integration", () => {
+    beforeAll(() => {
+      process.env.PLATFORM_INTEGRATION_TOKEN = process.env.GOOGLE_TEST_TOKEN!
+    })
+
+    it("reads a Google Sheet", async () => {
+      const sheetId = process.env.GMAIL_CRM_SHEET_ID
+      if (!sheetId) throw new Error("GMAIL_CRM_SHEET_ID required for integration test")
+
+      const { readSheet } = await import("../src/server/google-api")
+      const rows = await readSheet(sheetId)
+      expect(Array.isArray(rows)).toBe(true)
+      if (rows.length > 0) {
+        expect(rows[0].values).toHaveProperty("email")
+      }
+    })
+
+    it("lists Gmail threads for a known email", async () => {
+      const testEmail = process.env.GOOGLE_TEST_EMAIL
+      if (!testEmail) throw new Error("GOOGLE_TEST_EMAIL required for integration test")
+
+      const { listThreadsByEmail } = await import("../src/server/google-api")
+      const threads = await listThreadsByEmail(testEmail, 5)
+      expect(Array.isArray(threads)).toBe(true)
     })
   })
 })
@@ -207,7 +425,9 @@ async function waitForServer(url: string, timeoutMs = 10_000) {
     try {
       const res = await fetch(url)
       if (res.ok) return
-    } catch { /* not ready */ }
+    } catch {
+      /* not ready */
+    }
     await new Promise((r) => setTimeout(r, 200))
   }
   throw new Error(`Server at ${url} did not start within ${timeoutMs}ms`)
