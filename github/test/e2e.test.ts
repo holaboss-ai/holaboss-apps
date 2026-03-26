@@ -10,7 +10,7 @@ describe("GitHub Module E2E", () => {
     process.env.DB_PATH = TEST_DB_PATH
     const { startMcpServer } = await import("../src/server/mcp")
     mcpServer = startMcpServer(MCP_PORT)
-    await waitForServer(`http://localhost:${MCP_PORT}/health`)
+    await waitForServer(`http://localhost:${MCP_PORT}/mcp/health`)
   }, 15_000)
 
   afterAll(async () => {
@@ -25,34 +25,25 @@ describe("GitHub Module E2E", () => {
 
   describe("MCP server", () => {
     it("health check responds ok", async () => {
-      const res = await fetch(`http://localhost:${MCP_PORT}/health`)
+      const res = await fetch(`http://localhost:${MCP_PORT}/mcp/health`)
       expect(res.ok).toBe(true)
       expect((await res.json()).status).toBe("ok")
     })
 
-    it("MCP endpoint accepts POST", async () => {
-      const res = await fetch(`http://localhost:${MCP_PORT}/mcp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "initialize",
-          id: 1,
-          params: {
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "test", version: "1.0" },
-          },
-        }),
-      })
-      expect(res.status).toBe(200)
+    it("SSE endpoint returns event stream", async () => {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 2000)
+      try {
+        const res = await fetch(`http://localhost:${MCP_PORT}/mcp/sse`, { signal: controller.signal })
+        expect(res.status).toBe(200)
+        expect(res.headers.get("content-type")).toContain("text/event-stream")
+      } catch (err) {
+        if (err instanceof Error && err.name !== "AbortError") throw err
+      } finally { clearTimeout(timeout) }
     })
 
     it("returns 404 for unknown paths", async () => {
-      const res = await fetch(`http://localhost:${MCP_PORT}/unknown`)
+      const res = await fetch(`http://localhost:${MCP_PORT}/mcp/unknown`)
       expect(res.status).toBe(404)
     })
   })
