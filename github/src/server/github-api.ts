@@ -1,9 +1,18 @@
+import { readFileSync } from "node:fs"
+
 const GITHUB_API = "https://api.github.com"
+const TOKEN_FILE = "/holaboss/state/integration-tokens.json"
 
 function getToken(): string {
-  const token = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
-  if (!token) throw new Error("PLATFORM_INTEGRATION_TOKEN is not set")
-  return token
+  const envToken = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
+  if (envToken) return envToken
+
+  try {
+    const data = JSON.parse(readFileSync(TOKEN_FILE, "utf-8"))
+    if (data.github) return data.github as string
+  } catch { /* file doesn't exist yet */ }
+
+  throw new Error("No GitHub token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.")
 }
 
 function headers(): Record<string, string> {
