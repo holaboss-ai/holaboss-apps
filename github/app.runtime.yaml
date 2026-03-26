@@ -18,6 +18,37 @@ mcp:
   port: 3000
   path: /api/mcp
 
+tools:
+  - name: github_list_repos
+    description: "List user repositories sorted by recent activity"
+    parameters:
+      username: { type: string, description: "GitHub username (optional, defaults to authenticated user)" }
+      limit: { type: number, description: "Max results, default 10" }
+  - name: github_recent_activity
+    description: "Get recent commits, PRs, and releases for a repo"
+    parameters:
+      owner: { type: string, required: true, description: "Repository owner" }
+      repo: { type: string, required: true, description: "Repository name" }
+      days: { type: number, description: "Look back N days, default 7" }
+  - name: github_get_commit
+    description: "Get full commit details with file changes"
+    parameters:
+      owner: { type: string, required: true, description: "Repository owner" }
+      repo: { type: string, required: true, description: "Repository name" }
+      sha: { type: string, required: true, description: "Commit SHA" }
+  - name: github_get_pr
+    description: "Get pull request details"
+    parameters:
+      owner: { type: string, required: true, description: "Repository owner" }
+      repo: { type: string, required: true, description: "Repository name" }
+      number: { type: number, required: true, description: "PR number" }
+  - name: github_list_releases
+    description: "List releases for a repo"
+    parameters:
+      owner: { type: string, required: true, description: "Repository owner" }
+      repo: { type: string, required: true, description: "Repository name" }
+      limit: { type: number, description: "Max results, default 5" }
+
 integration:
   destination: "github"
   credential_source: "platform"

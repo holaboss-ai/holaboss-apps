@@ -18,6 +18,33 @@ mcp:
   port: 3000
   path: /api/mcp
 
+tools:
+  - name: gmail_search
+    description: "Search Gmail threads by query (from:X, to:X, subject:X, or free text)"
+    parameters:
+      query: { type: string, required: true, description: "Gmail search query" }
+      max_results: { type: number, description: "Max results, default 10" }
+  - name: gmail_get_thread
+    description: "Read a full Gmail thread with all messages"
+    parameters:
+      thread_id: { type: string, required: true, description: "Gmail thread ID" }
+  - name: gmail_draft_reply
+    description: "Create an email draft (stored locally, NOT sent). Use gmail_send_draft to send."
+    parameters:
+      to_email: { type: string, required: true, description: "Recipient email" }
+      subject: { type: string, description: "Email subject" }
+      body: { type: string, required: true, description: "Email body text" }
+      thread_id: { type: string, description: "Gmail thread ID if this is a reply" }
+  - name: gmail_send_draft
+    description: "Send a pending draft via Gmail API"
+    parameters:
+      draft_id: { type: string, required: true, description: "Local draft ID" }
+  - name: gmail_list_drafts
+    description: "List email drafts"
+    parameters:
+      status: { type: string, description: "Filter by status (pending/sent/discarded), default: pending" }
+      limit: { type: number, description: "Max results, default 20" }
+
 integration:
   destination: "google"
   credential_source: "platform"

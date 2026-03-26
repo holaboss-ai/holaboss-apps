@@ -18,6 +18,36 @@ mcp:
   port: 3000
   path: /api/mcp
 
+tools:
+  - name: sheets_get_info
+    description: "Get sheet title, headers, and row count"
+    parameters:
+      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
+  - name: sheets_read_rows
+    description: "Read all rows as objects (header-keyed). Optionally filter by column value."
+    parameters:
+      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
+      range: { type: string, description: "Sheet range, default Sheet1" }
+      filter_column: { type: string, description: "Column name to filter by" }
+      filter_value: { type: string, description: "Value to match in filter column" }
+  - name: sheets_read_range
+    description: "Read raw cell values from a specific range"
+    parameters:
+      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
+      range: { type: string, required: true, description: "Range like Sheet1!A1:C10" }
+  - name: sheets_update_cell
+    description: "Update a single cell value"
+    parameters:
+      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
+      range: { type: string, required: true, description: "Cell range like Sheet1!D5" }
+      value: { type: string, required: true, description: "New value" }
+  - name: sheets_append_row
+    description: "Append a new row to the sheet"
+    parameters:
+      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
+      values: { type: array, required: true, description: "Array of cell values" }
+      range: { type: string, description: "Sheet range, default Sheet1" }
+
 integration:
   destination: "google"
   credential_source: "platform"
