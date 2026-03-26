@@ -1,6 +1,4 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js"
-import { createServer } from "node:http"
 import { z } from "zod"
 
 import { MODULE_CONFIG } from "../lib/types"
@@ -91,46 +89,11 @@ function createMcpServer(): McpServer {
   return server
 }
 
-export function startMcpServer(port: number) {
-  const sessions = new Map<string, { server: McpServer; transport: SSEServerTransport }>()
+let _instance: McpServer | null = null
 
-  const httpServer = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://localhost:${port}`)
-
-    if (url.pathname === "/mcp/health") {
-      res.writeHead(200, { "Content-Type": "application/json" })
-      res.end(JSON.stringify({ status: "ok" }))
-      return
-    }
-
-    if (url.pathname === "/mcp/sse" && req.method === "GET") {
-      const server = createMcpServer()
-      const transport = new SSEServerTransport("/mcp/messages", res)
-      sessions.set(transport.sessionId, { server, transport })
-      res.on("close", () => { sessions.delete(transport.sessionId) })
-      await server.connect(transport)
-      return
-    }
-
-    if (url.pathname === "/mcp/messages" && req.method === "POST") {
-      const sessionId = url.searchParams.get("sessionId")
-      const session = sessionId ? sessions.get(sessionId) : undefined
-      if (!session) {
-        res.writeHead(400)
-        res.end("Unknown session")
-        return
-      }
-      await session.transport.handlePostMessage(req, res)
-      return
-    }
-
-    res.writeHead(404)
-    res.end("Not found")
-  })
-
-  httpServer.listen(port, () => {
-    console.log(`[mcp] server listening on port ${port}`)
-  })
-
-  return httpServer
+export function getMcpServer(): McpServer {
+  if (!_instance) {
+    _instance = createMcpServer()
+  }
+  return _instance
 }
