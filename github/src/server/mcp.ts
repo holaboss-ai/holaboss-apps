@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js"
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { createServer } from "node:http"
 import { z } from "zod"
 
@@ -121,35 +121,28 @@ function createMcpServer(): McpServer {
 }
 
 export function startMcpServer(port: number) {
-  const sessions = new Map<string, { server: McpServer; transport: SSEServerTransport }>()
+  const server = createMcpServer()
 
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`)
 
-    if (url.pathname === "/mcp/health") {
+    if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" })
       res.end(JSON.stringify({ status: "ok" }))
       return
     }
 
-    if (url.pathname === "/mcp/sse" && req.method === "GET") {
-      const server = createMcpServer()
-      const transport = new SSEServerTransport("/mcp/messages", res)
-      sessions.set(transport.sessionId, { server, transport })
-      res.on("close", () => { sessions.delete(transport.sessionId) })
+    if (url.pathname === "/mcp") {
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
       await server.connect(transport)
+      await transport.handleRequest(req, res)
       return
     }
 
-    if (url.pathname === "/mcp/messages" && req.method === "POST") {
-      const sessionId = url.searchParams.get("sessionId")
-      const session = sessionId ? sessions.get(sessionId) : undefined
-      if (!session) {
-        res.writeHead(400)
-        res.end("Unknown session")
-        return
-      }
-      await session.transport.handlePostMessage(req, res)
+    // Legacy SSE support (backward compatible)
+    if (url.pathname === "/mcp/health") {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ status: "ok" }))
       return
     }
 
@@ -158,7 +151,7 @@ export function startMcpServer(port: number) {
   })
 
   httpServer.listen(port, () => {
-    console.log(`[mcp] server listening on port ${port}`)
+    console.log(`[GitHub] MCP server listening on port ${port}`)
   })
 
   return httpServer
