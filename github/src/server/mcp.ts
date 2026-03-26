@@ -121,8 +121,7 @@ function createMcpServer(): McpServer {
 }
 
 export function startMcpServer(port: number) {
-  const mcpServer = createMcpServer()
-  const transports = new Map<string, SSEServerTransport>()
+  const sessions = new Map<string, { server: McpServer; transport: SSEServerTransport }>()
 
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`)
@@ -134,21 +133,23 @@ export function startMcpServer(port: number) {
     }
 
     if (url.pathname === "/mcp/sse" && req.method === "GET") {
+      const server = createMcpServer()
       const transport = new SSEServerTransport("/mcp/messages", res)
-      transports.set(transport.sessionId, transport)
-      await mcpServer.connect(transport)
+      sessions.set(transport.sessionId, { server, transport })
+      res.on("close", () => { sessions.delete(transport.sessionId) })
+      await server.connect(transport)
       return
     }
 
     if (url.pathname === "/mcp/messages" && req.method === "POST") {
       const sessionId = url.searchParams.get("sessionId")
-      const transport = sessionId ? transports.get(sessionId) : undefined
-      if (!transport) {
+      const session = sessionId ? sessions.get(sessionId) : undefined
+      if (!session) {
         res.writeHead(400)
         res.end("Unknown session")
         return
       }
-      await transport.handlePostMessage(req, res)
+      await session.transport.handlePostMessage(req, res)
       return
     }
 
