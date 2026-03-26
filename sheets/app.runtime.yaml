@@ -4,7 +4,7 @@ slug: "sheets"
 
 lifecycle:
   setup: "rm -rf node_modules && npm install --maxsockets 1 && npm run build"
-  start: "DB_PATH=./data/module.db nohup npm run start > /tmp/sheets.log 2>&1 &"
+  start: "npm start"
   stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true"
 
 healthchecks:
