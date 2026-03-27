@@ -13,6 +13,7 @@ const config = defineConfig({
       externals: {
         external: ["better-sqlite3"],
       },
+      scanDirs: ["server"],
     }),
     viteTsConfigPaths({
       projects: ["./tsconfig.json"],

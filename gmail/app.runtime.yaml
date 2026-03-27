@@ -9,14 +9,14 @@ lifecycle:
 
 healthchecks:
   mcp:
-    path: /api/health
+    path: /mcp/health
     timeout_s: 30
 
 mcp:
   enabled: true
-  transport: streamable-http
+  transport: http-sse
   port: 3000
-  path: /api/mcp
+  path: /mcp/sse
 
 tools:
   - name: gmail_search
