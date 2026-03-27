@@ -12,4 +12,12 @@ export default defineEventHandler(async (event) => {
   transports.set(transport.sessionId, transport)
   const server = createMcpServer()
   await server.connect(transport)
+
+  // Keep the handler alive until the client disconnects
+  await new Promise<void>((resolve) => {
+    res.on("close", () => {
+      transports.delete(transport.sessionId)
+      resolve()
+    })
+  })
 })
