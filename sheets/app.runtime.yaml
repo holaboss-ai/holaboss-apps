@@ -4,19 +4,19 @@ slug: "sheets"
 
 lifecycle:
   setup: "rm -rf node_modules && npm install --maxsockets 1 && npm run build"
-  start: "npm start"
-  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true"
+  start: "DB_PATH=./data/module.db nohup npm run start > /tmp/sheets-module.log 2>&1 & DB_PATH=./data/module.db nohup npx tsx src/server/start-services.ts > /tmp/sheets-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
 
 healthchecks:
   mcp:
-    path: /api/health
+    path: /mcp/health
     timeout_s: 30
 
 mcp:
   enabled: true
-  transport: streamable-http
-  port: 3000
-  path: /api/mcp
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
 
 tools:
   - name: sheets_get_info

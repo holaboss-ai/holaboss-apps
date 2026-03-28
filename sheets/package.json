@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3000",
+    "dev": "npx tsx src/server/start-services.ts & vite dev --port 3000",
+    "dev:web": "vite dev --port 3000",
+    "dev:services": "npx tsx src/server/start-services.ts",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
