@@ -122,7 +122,6 @@ function createMcpServer(): McpServer {
 }
 
 export function startMcpServer(port: number) {
-  const mcpServer = createMcpServer()
   const transports = new Map<string, SSEServerTransport>()
 
   const httpServer = createServer(async (req, res) => {
@@ -137,6 +136,7 @@ export function startMcpServer(port: number) {
     if (url.pathname === "/mcp/sse" && req.method === "GET") {
       const transport = new SSEServerTransport("/mcp/messages", res)
       transports.set(transport.sessionId, transport)
+      const mcpServer = createMcpServer()
       await mcpServer.connect(transport)
       return
     }
