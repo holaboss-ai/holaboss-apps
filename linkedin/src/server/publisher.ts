@@ -1,4 +1,5 @@
 import { LINKEDIN_CONFIG } from "../lib/types"
+import { getProviderToken } from "./integration-client"
 
 export interface PublishInput {
   holaboss_user_id: string
@@ -13,13 +14,18 @@ export interface PublishOutput {
 export class LinkedInPublisher {
   private readonly workspaceApiUrl: string
   private readonly integrationId: string
-  private readonly integrationToken: string
+  private cachedToken: string | null = null
 
   constructor() {
     const raw = process.env.WORKSPACE_API_URL ?? "http://localhost:3033"
     this.workspaceApiUrl = raw.replace(/\/+$/, "")
     this.integrationId = process.env.WORKSPACE_LINKEDIN_INTEGRATION_ID ?? ""
-    this.integrationToken = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
+  }
+
+  private async resolveToken(): Promise<string> {
+    if (this.cachedToken) return this.cachedToken
+    this.cachedToken = await getProviderToken("linkedin")
+    return this.cachedToken
   }
 
   async publish(input: PublishInput): Promise<PublishOutput> {
@@ -32,7 +38,7 @@ export class LinkedInPublisher {
       `${this.workspaceApiUrl}/api/posts/drafts?userId=${encodeURIComponent(input.holaboss_user_id)}`,
       {
         method: "POST",
-        headers: this.headers(),
+        headers: await this.headers(),
         body: JSON.stringify({
           provider: LINKEDIN_CONFIG.provider,
           integrationId: this.integrationId,
@@ -57,7 +63,7 @@ export class LinkedInPublisher {
         `${this.workspaceApiUrl}/api/posts/drafts/${draftId}?userId=${encodeURIComponent(input.holaboss_user_id)}`,
         {
           method: "PUT",
-          headers: this.headers(),
+          headers: await this.headers(),
           body: JSON.stringify({ scheduledDate: input.scheduled_at }),
         },
       )
@@ -73,7 +79,7 @@ export class LinkedInPublisher {
       `${this.workspaceApiUrl}/api/posts/drafts/${draftId}/publish`,
       {
         method: "PUT",
-        headers: this.headers(),
+        headers: await this.headers(),
         body: JSON.stringify({ userId: input.holaboss_user_id }),
       },
     )
@@ -107,17 +113,16 @@ export class LinkedInPublisher {
 
     const res = await fetch(url.toString(), {
       method: "DELETE",
-      headers: this.headers(),
+      headers: await this.headers(),
     })
     return res.ok || res.status === 404
   }
 
-  private headers() {
+  private async headers() {
+    const token = await this.resolveToken()
     return {
       "Content-Type": "application/json",
-      ...(this.integrationToken
-        ? { Authorization: `Bearer ${this.integrationToken}` }
-        : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     }
   }
 }
