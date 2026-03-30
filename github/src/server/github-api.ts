@@ -1,30 +1,27 @@
-import { readFileSync } from "node:fs"
+import { getProviderToken } from "./integration-client"
 
 const GITHUB_API = "https://api.github.com"
-const TOKEN_FILE = "/holaboss/state/integration-tokens.json"
 
-function getToken(): string {
-  const envToken = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
-  if (envToken) return envToken
+let cachedToken: string | null = null
 
-  try {
-    const data = JSON.parse(readFileSync(TOKEN_FILE, "utf-8"))
-    if (data.github) return data.github as string
-  } catch { /* file doesn't exist yet */ }
-
-  throw new Error("No GitHub token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.")
+async function resolveToken(): Promise<string> {
+  if (cachedToken) return cachedToken
+  cachedToken = await getProviderToken("github")
+  return cachedToken
 }
 
-function headers(): Record<string, string> {
+async function headers(): Promise<Record<string, string>> {
+  const token = await resolveToken()
   return {
-    Authorization: `Bearer ${getToken()}`,
+    Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
   }
 }
 
 async function ghfetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${GITHUB_API}${path}`, { headers: headers() })
+  const hdrs = await headers()
+  const res = await fetch(`${GITHUB_API}${path}`, { headers: hdrs })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`GitHub API error (${res.status}): ${text.slice(0, 500)}`)
