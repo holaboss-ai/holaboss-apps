@@ -1,26 +1,23 @@
-import { readFileSync } from "node:fs"
+import { getProviderToken } from "./integration-client"
 
 const SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
-const TOKEN_FILE = "/holaboss/state/integration-tokens.json"
 
-function getToken(): string {
-  const envToken = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
-  if (envToken) return envToken
+let cachedToken: string | null = null
 
-  try {
-    const data = JSON.parse(readFileSync(TOKEN_FILE, "utf-8"))
-    if (data.google) return data.google as string
-  } catch { /* file doesn't exist yet */ }
-
-  throw new Error("No Google token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.")
+async function resolveToken(): Promise<string> {
+  if (cachedToken) return cachedToken
+  cachedToken = await getProviderToken("google")
+  return cachedToken
 }
 
-function headers(): Record<string, string> {
-  return { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" }
+async function headers(): Promise<Record<string, string>> {
+  const token = await resolveToken()
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
 }
 
 async function gfetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { ...headers(), ...init?.headers } })
+  const hdrs = await headers()
+  const res = await fetch(url, { ...init, headers: { ...hdrs, ...init?.headers } })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`Sheets API error (${res.status}): ${text.slice(0, 500)}`)
@@ -104,6 +101,20 @@ export async function appendRow(sheetId: string, range: string, values: string[]
     method: "POST",
     body: JSON.stringify({ values: [values] }),
   })
+}
+
+export async function createSpreadsheet(title: string, headers: string[], rows: string[][]): Promise<string> {
+  const data = await gfetch<{ spreadsheetId: string }>(SHEETS_BASE, {
+    method: "POST",
+    body: JSON.stringify({ properties: { title } }),
+  })
+  const sheetId = data.spreadsheetId
+  const all = [headers, ...rows]
+  await gfetch(`${SHEETS_BASE}/${sheetId}/values/Sheet1!A1?valueInputOption=RAW`, {
+    method: "PUT",
+    body: JSON.stringify({ values: all }),
+  })
+  return sheetId
 }
 
 export { colLetter }
