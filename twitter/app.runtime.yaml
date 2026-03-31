@@ -5,7 +5,7 @@ slug: "twitter"
 lifecycle:
   setup: "rm -rf node_modules && npm install --maxsockets 1 && npm run build"
   start: "DB_PATH=./data/module.db nohup npm run start > /tmp/twitter-module.log 2>&1 & DB_PATH=./data/module.db nohup npx tsx src/server/start-services.ts > /tmp/twitter-services.log 2>&1 &"
-  stop: "kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
 
 healthchecks:
   mcp:
