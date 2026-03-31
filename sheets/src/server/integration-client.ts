@@ -1,5 +1,29 @@
-const BROKER_URL = process.env.HOLABOSS_INTEGRATION_BROKER_URL ?? "";
 const APP_GRANT = process.env.HOLABOSS_APP_GRANT ?? "";
+
+function resolveBrokerUrl(): string {
+  const explicit = process.env.HOLABOSS_INTEGRATION_BROKER_URL ?? "";
+  if (explicit) {
+    // Fix port mismatch: if runtime port is known and differs from the URL, use the runtime port
+    const runtimePort = process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? "";
+    if (runtimePort) {
+      try {
+        const url = new URL(explicit);
+        if (url.port !== runtimePort) {
+          url.port = runtimePort;
+          return url.toString().replace(/\/$/, "");
+        }
+      } catch {
+        // ignore URL parse errors
+      }
+    }
+    return explicit;
+  }
+  const port = process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? process.env.PORT ?? "";
+  if (port) {
+    return `http://127.0.0.1:${port}/api/v1/integrations`;
+  }
+  return "";
+}
 
 interface TokenExchangeResponse {
   token: string;
@@ -13,11 +37,12 @@ interface TokenExchangeError {
 }
 
 export async function getProviderToken(provider: string): Promise<string> {
-  if (!BROKER_URL || !APP_GRANT) {
+  const brokerUrl = resolveBrokerUrl();
+  if (!brokerUrl || !APP_GRANT) {
     return getFallbackToken(provider);
   }
 
-  const brokerTokenUrl = `${BROKER_URL}/broker/token`;
+  const brokerTokenUrl = `${brokerUrl}/broker/token`;
   try {
     const response = await fetch(brokerTokenUrl, {
       method: "POST",
