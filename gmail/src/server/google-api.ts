@@ -1,28 +1,18 @@
-import { getProviderToken } from "./integration-client"
+import { createIntegrationClient } from "./holaboss-bridge"
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+const google = createIntegrationClient("google")
 
-let cachedToken: string | null = null
-
-async function resolveToken(): Promise<string> {
-  if (cachedToken) return cachedToken
-  cachedToken = await getProviderToken("google")
-  return cachedToken
-}
-
-async function headers(): Promise<Record<string, string>> {
-  const token = await resolveToken()
-  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-}
-
-async function gfetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const hdrs = await headers()
-  const res = await fetch(url, { ...init, headers: { ...hdrs, ...init?.headers } })
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(`Gmail API error (${res.status}): ${text.slice(0, 500)}`)
+async function gfetch<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const result = await google.proxy<T>({
+    method: (init?.method ?? "GET") as "GET" | "POST",
+    endpoint: url,
+    ...(init?.body !== undefined ? { body: init.body } : {})
+  })
+  if (result.status >= 400) {
+    throw new Error(`Gmail API error (${result.status}): ${JSON.stringify(result.data).slice(0, 500)}`)
   }
-  return res.json() as Promise<T>
+  return result.data as T
 }
 
 export interface GmailMessage {
@@ -86,7 +76,7 @@ export async function sendEmail(params: { to: string; subject: string; body: str
   const raw = Buffer.from(lines.join("\r\n")).toString("base64url")
   const payload: Record<string, string> = { raw }
   if (params.threadId) payload.threadId = params.threadId
-  return gfetch<{ id: string; threadId: string }>(`${GMAIL_BASE}/messages/send`, { method: "POST", body: JSON.stringify(payload) })
+  return gfetch<{ id: string; threadId: string }>(`${GMAIL_BASE}/messages/send`, { method: "POST", body: payload })
 }
 
 export async function searchEmails(query: string, maxResults = 10): Promise<Array<{ id: string; threadId: string; snippet: string }>> {
