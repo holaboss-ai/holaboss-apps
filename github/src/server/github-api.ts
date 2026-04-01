@@ -1,32 +1,17 @@
-import { getProviderToken } from "./integration-client"
+import { createIntegrationClient } from "./holaboss-bridge"
 
 const GITHUB_API = "https://api.github.com"
-
-let cachedToken: string | null = null
-
-async function resolveToken(): Promise<string> {
-  if (cachedToken) return cachedToken
-  cachedToken = await getProviderToken("github")
-  return cachedToken
-}
-
-async function headers(): Promise<Record<string, string>> {
-  const token = await resolveToken()
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  }
-}
+const github = createIntegrationClient("github")
 
 async function ghfetch<T>(path: string): Promise<T> {
-  const hdrs = await headers()
-  const res = await fetch(`${GITHUB_API}${path}`, { headers: hdrs })
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(`GitHub API error (${res.status}): ${text.slice(0, 500)}`)
+  const result = await github.proxy<T>({
+    method: "GET",
+    endpoint: `${GITHUB_API}${path}`,
+  })
+  if (result.status >= 400) {
+    throw new Error(`GitHub API error (${result.status}): ${JSON.stringify(result.data).slice(0, 500)}`)
   }
-  return res.json() as Promise<T>
+  return result.data as T
 }
 
 export async function listUserRepos(username?: string, perPage = 10) {

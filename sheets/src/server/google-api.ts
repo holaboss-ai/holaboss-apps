@@ -1,28 +1,18 @@
-import { getProviderToken } from "./integration-client"
+import { createIntegrationClient } from "./holaboss-bridge"
 
 const SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
+const google = createIntegrationClient("google")
 
-let cachedToken: string | null = null
-
-async function resolveToken(): Promise<string> {
-  if (cachedToken) return cachedToken
-  cachedToken = await getProviderToken("google")
-  return cachedToken
-}
-
-async function headers(): Promise<Record<string, string>> {
-  const token = await resolveToken()
-  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-}
-
-async function gfetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const hdrs = await headers()
-  const res = await fetch(url, { ...init, headers: { ...hdrs, ...init?.headers } })
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(`Sheets API error (${res.status}): ${text.slice(0, 500)}`)
+async function gfetch<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const result = await google.proxy<T>({
+    method: (init?.method ?? "GET") as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    endpoint: url,
+    ...(init?.body !== undefined ? { body: init.body } : {}),
+  })
+  if (result.status >= 400) {
+    throw new Error(`Sheets API error (${result.status}): ${JSON.stringify(result.data).slice(0, 500)}`)
   }
-  return res.json() as Promise<T>
+  return result.data as T
 }
 
 export interface SheetRow {
@@ -79,7 +69,7 @@ function colLetter(index: number): string {
 export async function updateCell(sheetId: string, range: string, value: string): Promise<void> {
   await gfetch(`${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
     method: "PUT",
-    body: JSON.stringify({ values: [[value]] }),
+    body: { values: [[value]] },
   })
 }
 
@@ -92,27 +82,27 @@ export async function updateRow(sheetId: string, rowNumber: number, headerCount:
   const range = `Sheet1!A${rowNumber}:${colLetter(headerCount)}${rowNumber}`
   await gfetch(`${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
     method: "PUT",
-    body: JSON.stringify({ values: [row] }),
+    body: { values: [row] },
   })
 }
 
 export async function appendRow(sheetId: string, range: string, values: string[]): Promise<void> {
   await gfetch(`${SHEETS_BASE}/${sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
     method: "POST",
-    body: JSON.stringify({ values: [values] }),
+    body: { values: [values] },
   })
 }
 
 export async function createSpreadsheet(title: string, headers: string[], rows: string[][]): Promise<string> {
   const data = await gfetch<{ spreadsheetId: string }>(SHEETS_BASE, {
     method: "POST",
-    body: JSON.stringify({ properties: { title } }),
+    body: { properties: { title } },
   })
   const sheetId = data.spreadsheetId
   const all = [headers, ...rows]
   await gfetch(`${SHEETS_BASE}/${sheetId}/values/Sheet1!A1?valueInputOption=RAW`, {
     method: "PUT",
-    body: JSON.stringify({ values: all }),
+    body: { values: all },
   })
   return sheetId
 }

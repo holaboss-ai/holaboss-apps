@@ -1,29 +1,19 @@
-import { getProviderToken } from "./integration-client"
+import { createIntegrationClient } from "./holaboss-bridge"
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+const google = createIntegrationClient("google")
 
-let cachedToken: string | null = null
-
-async function resolveToken(): Promise<string> {
-  if (cachedToken) return cachedToken
-  cachedToken = await getProviderToken("google")
-  return cachedToken
-}
-
-async function headers(): Promise<Record<string, string>> {
-  const token = await resolveToken()
-  return { Authorization: `Bearer ${token}` }
-}
-
-async function gfetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const hdrs = await headers()
-  const res = await fetch(url, { ...init, headers: { ...hdrs, ...init?.headers } })
-  if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    throw new Error(`Google API error (${res.status}): ${text.slice(0, 500)}`)
+async function gfetch<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const result = await google.proxy<T>({
+    method: (init?.method ?? "GET") as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    endpoint: url,
+    ...(init?.body !== undefined ? { body: init.body } : {}),
+  })
+  if (result.status >= 400) {
+    throw new Error(`Google API error (${result.status}): ${JSON.stringify(result.data).slice(0, 500)}`)
   }
-  return res.json() as Promise<T>
+  return result.data as T
 }
 
 export interface UserProfile {
@@ -121,8 +111,7 @@ export async function sendEmail(to: string, subject: string, body: string): Prom
 
   const res = await gfetch<{ id: string }>(`${GMAIL_BASE}/messages/send`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ raw: encoded }),
+    body: { raw: encoded },
   })
   return res
 }
