@@ -5,6 +5,7 @@ export interface DraftRecord {
   subject: string | null
   body: string
   status: "pending" | "sent" | "discarded"
+  output_id: string | null
   sent_at: string | null
   created_at: string
 }

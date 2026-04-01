@@ -24,9 +24,20 @@ function migrate(db: Database.Database) {
       subject TEXT,
       body TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
+      output_id TEXT,
       sent_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
+    CREATE INDEX IF NOT EXISTS idx_drafts_output_id ON drafts(output_id);
   `)
+
+  if (!hasColumn(db, "drafts", "output_id")) {
+    db.exec("ALTER TABLE drafts ADD COLUMN output_id TEXT")
+  }
+}
+
+function hasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+  return columns.some((column) => column.name === columnName)
 }

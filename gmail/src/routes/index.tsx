@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute } from "@tanstack/react-router"
 import { fetchDrafts } from "../server/actions"
 
 export const Route = createFileRoute("/")({
@@ -16,14 +16,19 @@ function GmailPage() {
       </div>
       <div className="space-y-2">
         {drafts.map((d) => (
-          <div key={d.id} className="rounded-lg border border-border px-4 py-3">
+          <Link
+            key={d.id}
+            to="/drafts/$draftId"
+            params={{ draftId: d.id }}
+            className="block rounded-lg border border-border px-4 py-3 transition-colors hover:bg-accent/40"
+          >
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium">{d.subject || "(no subject)"}</p>
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${d.status === "sent" ? "bg-green-500/10 text-green-600" : d.status === "pending" ? "bg-amber-500/10 text-amber-600" : "bg-gray-500/10 text-gray-600"}`}>{d.status}</span>
             </div>
             <p className="text-xs text-muted-foreground">To: {d.to_email}</p>
             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{d.body}</p>
-          </div>
+          </Link>
         ))}
         {drafts.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">No drafts. Ask the agent to draft an email.</p>}
       </div>

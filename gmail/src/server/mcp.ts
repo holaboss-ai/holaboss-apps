@@ -6,11 +6,16 @@ import { z } from "zod"
 
 import type { DraftRecord } from "../lib/types"
 import { MODULE_CONFIG } from "../lib/types"
+import { syncDraftOutput } from "./app-outputs"
 import { getDb } from "./db"
 import { listThreads, getThread, parseMessage, sendEmail } from "./google-api"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
 function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
+
+function persistDraftOutputId(db: ReturnType<typeof getDb>, draftId: string, outputId: string) {
+  db.prepare("UPDATE drafts SET output_id = ? WHERE id = ?").run(outputId, draftId)
+}
 
 function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -47,14 +52,24 @@ function createMcpServer(): McpServer {
     subject: z.string().optional().describe("Email subject"),
     body: z.string().describe("Email body text"),
     thread_id: z.string().optional().describe("Gmail thread ID if this is a reply"),
-  }, async ({ to_email, subject, body, thread_id }) => {
+    contact_row_ref: z.string().optional().describe("Optional Sheets contact row reference for CRM linking"),
+  }, async ({ to_email, subject, body, thread_id, contact_row_ref }) => {
     try {
       const db = getDb()
       const id = randomUUID()
       db.prepare(
         "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
       ).run(id, to_email, thread_id ?? null, subject ?? null, body)
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      let draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      try {
+        const outputId = await syncDraftOutput(draft, { contactRowRef: contact_row_ref ?? null })
+        if (outputId && outputId !== draft.output_id) {
+          persistDraftOutputId(db, draft.id, outputId)
+          draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+        }
+      } catch (outputError) {
+        console.warn("[gmail] failed to sync draft output", outputError)
+      }
       return text(draft)
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
@@ -80,8 +95,20 @@ function createMcpServer(): McpServer {
       db.prepare(
         "UPDATE drafts SET status = 'sent', sent_at = datetime('now') WHERE id = ?",
       ).run(draft_id)
+      const updatedDraft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
+      try {
+        await syncDraftOutput(updatedDraft)
+      } catch (outputError) {
+        console.warn("[gmail] failed to update draft output", outputError)
+      }
 
-      return text({ draft_id, message_id: result.id, thread_id: result.threadId, status: "sent" })
+      return text({
+        draft_id,
+        message_id: result.id,
+        thread_id: result.threadId,
+        output_id: updatedDraft.output_id,
+        status: "sent",
+      })
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }

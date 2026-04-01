@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DraftsDraftIdRouteImport } from './routes/drafts.$draftId'
 import { Route as ApiMcpRouteImport } from './routes/api/mcp'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DraftsDraftIdRoute = DraftsDraftIdRouteImport.update({
+  id: '/drafts/$draftId',
+  path: '/drafts/$draftId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiMcpRoute = ApiMcpRouteImport.update({
@@ -33,30 +39,34 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/api/mcp': typeof ApiMcpRoute
+  '/drafts/$draftId': typeof DraftsDraftIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/api/mcp': typeof ApiMcpRoute
+  '/drafts/$draftId': typeof DraftsDraftIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/health': typeof ApiHealthRoute
   '/api/mcp': typeof ApiMcpRoute
+  '/drafts/$draftId': typeof DraftsDraftIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/health' | '/api/mcp'
+  fullPaths: '/' | '/api/health' | '/api/mcp' | '/drafts/$draftId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/health' | '/api/mcp'
-  id: '__root__' | '/' | '/api/health' | '/api/mcp'
+  to: '/' | '/api/health' | '/api/mcp' | '/drafts/$draftId'
+  id: '__root__' | '/' | '/api/health' | '/api/mcp' | '/drafts/$draftId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiMcpRoute: typeof ApiMcpRoute
+  DraftsDraftIdRoute: typeof DraftsDraftIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/drafts/$draftId': {
+      id: '/drafts/$draftId'
+      path: '/drafts/$draftId'
+      fullPath: '/drafts/$draftId'
+      preLoaderRoute: typeof DraftsDraftIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/mcp': {
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiMcpRoute: ApiMcpRoute,
+  DraftsDraftIdRoute: DraftsDraftIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

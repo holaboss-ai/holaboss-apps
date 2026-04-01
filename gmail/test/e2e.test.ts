@@ -40,6 +40,13 @@ describe("Gmail Module E2E", () => {
       const names = tables.map((t) => t.name)
       expect(names).toContain("drafts")
     })
+
+    it("adds output_id column for workspace output synchronization", async () => {
+      const { getDb } = await import("../src/server/db")
+      const db = getDb()
+      const columns = db.prepare("PRAGMA table_info(drafts)").all() as Array<{ name: string }>
+      expect(columns.map((column) => column.name)).toContain("output_id")
+    })
   })
 
   // =========================================================================
@@ -185,6 +192,41 @@ describe("Gmail Module E2E", () => {
       expect(MODULE_CONFIG.provider).toBe("google")
       expect(MODULE_CONFIG.destination).toBe("google")
       expect(MODULE_CONFIG.name).toBe("Gmail")
+    })
+  })
+
+  describe("App output protocol", () => {
+    it("builds presentation metadata for Gmail draft outputs", async () => {
+      const { buildDraftOutputMetadata, buildDraftOutputTitle } = await import("../src/server/app-outputs")
+      const draft: DraftRecord = {
+        id: "draft-42",
+        to_email: "John@Example.com",
+        gmail_thread_id: "thread-1",
+        subject: "Follow up",
+        body: "Body",
+        status: "pending",
+        output_id: null,
+        sent_at: null,
+        created_at: new Date().toISOString(),
+      }
+
+      expect(buildDraftOutputTitle(draft)).toBe("Follow up")
+      expect(buildDraftOutputMetadata(draft)).toMatchObject({
+        source_kind: "application",
+        presentation: {
+          kind: "app_resource",
+          view: "drafts",
+          path: "/drafts/draft-42",
+        },
+        resource: {
+          entity_type: "draft",
+          entity_id: "draft-42",
+        },
+        crm: {
+          contact_key: "john@example.com",
+          primary_email: "John@Example.com",
+        },
+      })
     })
   })
 
