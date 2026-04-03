@@ -5,6 +5,7 @@ import { z } from "zod"
 
 import { MODULE_CONFIG } from "../lib/types"
 import { getSheetInfo, readRows, readRange, updateCell, appendRow } from "./google-api"
+import { contactRef, publishContactRowOutput } from "./app-outputs"
 
 function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
@@ -12,6 +13,20 @@ function text(data: unknown) {
 
 function err(message: string) {
   return { content: [{ type: "text" as const, text: message }], isError: true }
+}
+
+function findEmailColumnIndex(headers: string[]): number {
+  return headers.findIndex(h => {
+    const lower = h.trim().toLowerCase()
+    return lower === "email" || lower === "mail" || lower === "e-mail"
+  })
+}
+
+function findNameColumnIndex(headers: string[]): number {
+  return headers.findIndex(h => {
+    const lower = h.trim().toLowerCase()
+    return lower === "name" || lower === "fullname" || lower === "full name" || lower === "contact"
+  })
 }
 
 function createMcpServer(): McpServer {
@@ -66,10 +81,37 @@ function createMcpServer(): McpServer {
     sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
     range: z.string().describe("Cell in A1 notation (e.g. Sheet1!D5)"),
     value: z.string().describe("New cell value"),
-  }, async ({ sheet_id, range, value }) => {
+    contact_name: z.string().optional().describe("Contact name if this is a CRM contact row update"),
+    contact_email: z.string().optional().describe("Contact email if this is a CRM contact row update"),
+  }, async ({ sheet_id, range, value, contact_name, contact_email }) => {
     try {
       await updateCell(sheet_id, range, value)
-      return text({ updated: true, range, value })
+      const result: Record<string, unknown> = { updated: true, range, value }
+
+      if (contact_name && contact_email) {
+        const match = range.match(/^(.+?)!([A-Z]+)(\d+)$/)
+        if (match) {
+          const sheetName = match[1]
+          const rowNumber = parseInt(match[3], 10)
+          const ref = contactRef(sheet_id, sheetName, rowNumber)
+          try {
+            const outputId = await publishContactRowOutput({
+              ref,
+              name: contact_name,
+              email: contact_email,
+              spreadsheetId: sheet_id,
+              sheetName,
+              rowNumber,
+              action: "Updated CRM contact",
+            })
+            if (outputId) result.output_id = outputId
+          } catch {
+            // non-fatal: output publishing should not block the tool
+          }
+        }
+      }
+
+      return text(result)
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }
@@ -81,8 +123,41 @@ function createMcpServer(): McpServer {
     range: z.string().optional().describe("Sheet range (default: Sheet1)"),
   }, async ({ sheet_id, values, range }) => {
     try {
-      await appendRow(sheet_id, range ?? "Sheet1", values)
-      return text({ appended: true, values })
+      const sheetName = range ?? "Sheet1"
+      await appendRow(sheet_id, sheetName, values)
+      const result: Record<string, unknown> = { appended: true, values }
+
+      // Try to publish a contact output if this looks like a contacts sheet
+      try {
+        const info = await getSheetInfo(sheet_id)
+        const headers = (info.headers ?? []).map((h: string) => h.trim().toLowerCase())
+        const emailIdx = findEmailColumnIndex(headers)
+        const nameIdx = findNameColumnIndex(headers)
+
+        if (emailIdx >= 0 && emailIdx < values.length) {
+          const email = values[emailIdx]
+          const name = nameIdx >= 0 && nameIdx < values.length ? values[nameIdx] : ""
+          const rows = await readRows(sheet_id, sheetName)
+          const lastRow = rows[rows.length - 1]
+          if (lastRow) {
+            const ref = contactRef(sheet_id, sheetName, lastRow.rowNumber)
+            const outputId = await publishContactRowOutput({
+              ref,
+              name: name || email,
+              email,
+              spreadsheetId: sheet_id,
+              sheetName,
+              rowNumber: lastRow.rowNumber,
+              action: "Added CRM contact",
+            })
+            if (outputId) result.output_id = outputId
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+
+      return text(result)
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }
