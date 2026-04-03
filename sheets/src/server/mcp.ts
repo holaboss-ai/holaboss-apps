@@ -4,7 +4,7 @@ import { createServer } from "node:http"
 import { z } from "zod"
 
 import { MODULE_CONFIG } from "../lib/types"
-import { getSheetInfo, readRows, readRange, updateCell, appendRow } from "./google-api"
+import { getSheetInfo, readRows, readRange, updateCell, appendRow, createSpreadsheet } from "./google-api"
 import { contactRef, publishContactRowOutput } from "./app-outputs"
 
 function text(data: unknown) {
@@ -41,6 +41,19 @@ function createMcpServer(): McpServer {
     try {
       const info = await getSheetInfo(sheet_id)
       return text(info)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("sheets_create_spreadsheet", "Create a new Google Sheets spreadsheet with headers and optional initial rows", {
+    title: z.string().describe("Spreadsheet title"),
+    headers: z.array(z.string()).describe("Column header names (e.g. [\"name\", \"email\", \"company\"])"),
+    rows: z.array(z.array(z.string())).optional().describe("Optional initial data rows"),
+  }, async ({ title, headers, rows }) => {
+    try {
+      const spreadsheetId = await createSpreadsheet(title, headers, rows ?? [])
+      return text({ created: true, spreadsheet_id: spreadsheetId, title, headers })
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }

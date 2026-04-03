@@ -19,6 +19,12 @@ mcp:
   path: /mcp/sse
 
 tools:
+  - name: sheets_create_spreadsheet
+    description: "Create a new Google Sheets spreadsheet with headers and optional initial rows"
+    parameters:
+      title: { type: string, required: true, description: "Spreadsheet title" }
+      headers: { type: array, required: true, description: "Column header names" }
+      rows: { type: array, description: "Optional initial data rows" }
   - name: sheets_get_info
     description: "Get sheet title, headers, and row count"
     parameters:
