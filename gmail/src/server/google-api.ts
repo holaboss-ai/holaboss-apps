@@ -1,7 +1,7 @@
 import { createIntegrationClient } from "./holaboss-bridge"
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
-const google = createIntegrationClient("google")
+const google = createIntegrationClient("gmail")
 
 async function gfetch<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const result = await google.proxy<T>({

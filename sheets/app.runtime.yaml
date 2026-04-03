@@ -49,7 +49,7 @@ tools:
       range: { type: string, description: "Sheet range, default Sheet1" }
 
 integration:
-  destination: "google"
+  destination: "googlesheets"
   credential_source: "platform"
   holaboss_user_id_required: true
 

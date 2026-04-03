@@ -46,7 +46,7 @@ tools:
       limit: { type: number, description: "Max results, default 20" }
 
 integration:
-  destination: "google"
+  destination: "gmail"
   credential_source: "platform"
   holaboss_user_id_required: true
 

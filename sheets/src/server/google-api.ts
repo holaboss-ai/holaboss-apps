@@ -1,7 +1,7 @@
 import { createIntegrationClient } from "./holaboss-bridge"
 
 const SHEETS_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
-const google = createIntegrationClient("google")
+const google = createIntegrationClient("googlesheets")
 
 async function gfetch<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const result = await google.proxy<T>({
