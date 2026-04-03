@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DemoRouteImport } from './routes/demo'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ContactsContactRefRouteImport } from './routes/contacts.$contactRef'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth/logout'
 import { Route as ApiAuthGoogleRouteImport } from './routes/api/auth/google'
@@ -24,6 +25,11 @@ const DemoRoute = DemoRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactsContactRefRoute = ContactsContactRefRouteImport.update({
+  id: '/contacts/$contactRef',
+  path: '/contacts/$contactRef',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/api/health': typeof ApiHealthRoute
+  '/contacts/$contactRef': typeof ContactsContactRefRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/google': typeof ApiAuthGoogleRoute
   '/api/auth/logout': typeof ApiAuthLogoutRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/api/health': typeof ApiHealthRoute
+  '/contacts/$contactRef': typeof ContactsContactRefRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/google': typeof ApiAuthGoogleRoute
   '/api/auth/logout': typeof ApiAuthLogoutRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/demo': typeof DemoRoute
   '/api/health': typeof ApiHealthRoute
+  '/contacts/$contactRef': typeof ContactsContactRefRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/google': typeof ApiAuthGoogleRoute
   '/api/auth/logout': typeof ApiAuthLogoutRoute
@@ -78,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/demo'
     | '/api/health'
+    | '/contacts/$contactRef'
     | '/api/auth/callback'
     | '/api/auth/google'
     | '/api/auth/logout'
@@ -86,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/demo'
     | '/api/health'
+    | '/contacts/$contactRef'
     | '/api/auth/callback'
     | '/api/auth/google'
     | '/api/auth/logout'
@@ -94,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/demo'
     | '/api/health'
+    | '/contacts/$contactRef'
     | '/api/auth/callback'
     | '/api/auth/google'
     | '/api/auth/logout'
@@ -103,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DemoRoute: typeof DemoRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ContactsContactRefRoute: typeof ContactsContactRefRoute
   ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
   ApiAuthGoogleRoute: typeof ApiAuthGoogleRoute
   ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
@@ -122,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contacts/$contactRef': {
+      id: '/contacts/$contactRef'
+      path: '/contacts/$contactRef'
+      fullPath: '/contacts/$contactRef'
+      preLoaderRoute: typeof ContactsContactRefRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/health': {
@@ -159,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DemoRoute: DemoRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ContactsContactRefRoute: ContactsContactRefRoute,
   ApiAuthCallbackRoute: ApiAuthCallbackRoute,
   ApiAuthGoogleRoute: ApiAuthGoogleRoute,
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,

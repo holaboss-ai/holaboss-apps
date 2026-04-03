@@ -6,12 +6,27 @@ import { z } from "zod"
 
 import type { DraftRecord } from "../lib/types"
 import { MODULE_CONFIG } from "../lib/types"
-import { syncDraftOutput } from "./app-outputs"
+import { syncDraftOutput, syncThreadOutput } from "./app-outputs"
 import { getDb } from "./db"
 import { listThreads, getThread, parseMessage, sendEmail } from "./google-api"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
 function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
+
+function extractEmailAddress(value: string): string {
+  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  return match?.[0] ?? ""
+}
+
+function firstNonEmpty(values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const normalized = (value ?? "").trim()
+    if (normalized) {
+      return normalized
+    }
+  }
+  return ""
+}
 
 function persistDraftOutputId(db: ReturnType<typeof getDb>, draftId: string, outputId: string) {
   db.prepare("UPDATE drafts SET output_id = ? WHERE id = ?").run(outputId, draftId)
@@ -42,6 +57,41 @@ function createMcpServer(): McpServer {
       const thread = await getThread(thread_id)
       const messages = thread.messages.map(parseMessage)
       return text({ id: thread.id, messages })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("gmail_open_thread", "Open a Gmail thread as a durable workspace output for CRM follow-up.", {
+    thread_id: z.string().describe("Gmail thread ID"),
+    contact_email: z.string().optional().describe("Primary CRM contact email for the thread"),
+    contact_row_ref: z.string().optional().describe("Optional Sheets contact row reference for CRM linking"),
+  }, async ({ thread_id, contact_email, contact_row_ref }) => {
+    try {
+      const thread = await getThread(thread_id)
+      const messages = thread.messages.map(parseMessage)
+      const primaryEmail = firstNonEmpty([
+        contact_email,
+        ...messages.flatMap((message) => [
+          extractEmailAddress(message.to),
+          extractEmailAddress(message.from),
+        ]),
+      ])
+      const subject = firstNonEmpty(messages.map((message) => message.subject))
+      const outputId = await syncThreadOutput({
+        threadId: thread.id,
+        subject,
+        primaryEmail: primaryEmail || null,
+        contactRowRef: contact_row_ref ?? null,
+      })
+
+      return text({
+        id: thread.id,
+        subject,
+        primary_email: primaryEmail || null,
+        output_id: outputId,
+        messages,
+      })
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }

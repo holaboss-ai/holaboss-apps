@@ -18,6 +18,61 @@ export function buildDraftOutputTitle(draft: DraftRecord): string {
   return subject || `Draft to ${draft.to_email}`
 }
 
+export interface ThreadOutputInput {
+  threadId: string
+  subject?: string | null
+  primaryEmail?: string | null
+  contactRowRef?: string | null
+  existingOutputId?: string | null
+}
+
+export function threadRoutePath(threadId: string): string {
+  return `/threads/${encodeURIComponent(threadId)}`
+}
+
+export function buildThreadOutputTitle(input: ThreadOutputInput): string {
+  const subject = (input.subject ?? "").trim()
+  const primaryEmail = (input.primaryEmail ?? "").trim()
+  if (subject) {
+    return subject
+  }
+  if (primaryEmail) {
+    return `Thread with ${primaryEmail}`
+  }
+  return `Thread ${input.threadId}`
+}
+
+export function buildThreadOutputMetadata(
+  input: ThreadOutputInput,
+): Record<string, unknown> {
+  const primaryEmail = (input.primaryEmail ?? "").trim()
+  return {
+    source_kind: "application",
+    presentation: buildAppResourcePresentation({
+      view: "threads",
+      path: threadRoutePath(input.threadId),
+    }),
+    resource: {
+      entity_type: "thread",
+      entity_id: input.threadId,
+      label: buildThreadOutputTitle(input),
+    },
+    crm: {
+      ...(primaryEmail
+        ? {
+            contact_key: normalizedContactKey(primaryEmail),
+            primary_email: primaryEmail,
+          }
+        : {}),
+      ...(input.contactRowRef
+        ? {
+            contact_row_ref: input.contactRowRef,
+          }
+        : {}),
+    },
+  }
+}
+
 export function buildDraftOutputMetadata(
   draft: DraftRecord,
   crm?: { contactRowRef?: string | null },
@@ -65,6 +120,33 @@ export async function syncDraftOutput(
     moduleResourceId: draft.id,
     platform: "google",
     status: draft.status,
+    metadata,
+  })
+
+  return output?.id ?? null
+}
+
+export async function syncThreadOutput(input: ThreadOutputInput) {
+  const title = buildThreadOutputTitle(input)
+  const metadata = buildThreadOutputMetadata(input)
+
+  if (input.existingOutputId) {
+    await updateAppOutput(input.existingOutputId, {
+      title,
+      status: "ready",
+      moduleResourceId: input.threadId,
+      metadata,
+    })
+    return input.existingOutputId
+  }
+
+  const output = await createAppOutput({
+    outputType: "thread",
+    title,
+    moduleId: "gmail",
+    moduleResourceId: input.threadId,
+    platform: "google",
+    status: "ready",
     metadata,
   })
 

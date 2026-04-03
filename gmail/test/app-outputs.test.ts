@@ -111,4 +111,47 @@ describe("Holaboss bridge app outputs", () => {
     expect(patchUrl).toBe("http://127.0.0.1:4567/api/v1/outputs/output-1")
     expect(String(patchInit?.body ?? "")).toContain("\"status\":\"ready\"")
   })
+
+  it("builds crm-linked thread output metadata for reopenable thread surfaces", async () => {
+    const {
+      buildThreadOutputMetadata,
+      buildThreadOutputTitle,
+      threadRoutePath,
+    } = await import("../src/server/app-outputs")
+
+    expect(threadRoutePath("thread-42")).toBe("/threads/thread-42")
+    expect(
+      buildThreadOutputTitle({
+        threadId: "thread-42",
+        subject: "Quarterly follow-up",
+        primaryEmail: "alice@example.com",
+      }),
+    ).toBe("Quarterly follow-up")
+
+    expect(
+      buildThreadOutputMetadata({
+        threadId: "thread-42",
+        subject: "Quarterly follow-up",
+        primaryEmail: "Alice@Example.com",
+        contactRowRef: "sheet-1:Sheet1:7",
+      }),
+    ).toMatchObject({
+      source_kind: "application",
+      presentation: {
+        kind: "app_resource",
+        view: "threads",
+        path: "/threads/thread-42",
+      },
+      resource: {
+        entity_type: "thread",
+        entity_id: "thread-42",
+        label: "Quarterly follow-up",
+      },
+      crm: {
+        contact_key: "alice@example.com",
+        primary_email: "Alice@Example.com",
+        contact_row_ref: "sheet-1:Sheet1:7",
+      },
+    })
+  })
 })

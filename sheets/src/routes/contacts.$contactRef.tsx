@@ -11,13 +11,42 @@ export const Route = createFileRoute("/contacts/$contactRef")({
 
 function ContactDetailPage() {
   const contact = Route.useLoaderData()
-  const name = contact.values.name || contact.values.fullname || contact.values.contact || "Unknown"
-  const email = contact.values.email || contact.values.mail || ""
-  const company = contact.values.company || contact.values.organization || ""
+  const normalizedEntries = Object.entries(contact.values).map(([key, value]) => [
+    key,
+    key.trim().toLowerCase(),
+    value,
+  ] as const)
 
-  const otherFields = Object.entries(contact.values).filter(
-    ([key]) => !["name", "fullname", "contact", "email", "mail", "company", "organization"].includes(key.toLowerCase()),
-  )
+  const pickField = (...keys: string[]) =>
+    normalizedEntries.find(([, normalizedKey]) => keys.includes(normalizedKey))?.[2] ?? ""
+
+  const name = pickField("name", "fullname", "full name", "contact") || "Unknown"
+  const email = pickField("email", "mail", "e-mail")
+  const company = pickField("company", "organization")
+  const stage = pickField("stage")
+  const owner = pickField("owner")
+  const lastContactedAt = pickField("last contacted at", "last_contacted_at")
+  const nextAction = pickField("next action", "next_action")
+
+  const reservedKeys = new Set([
+    "name",
+    "fullname",
+    "full name",
+    "contact",
+    "email",
+    "mail",
+    "e-mail",
+    "company",
+    "organization",
+    "stage",
+    "owner",
+    "last contacted at",
+    "last_contacted_at",
+    "next action",
+    "next_action",
+  ])
+
+  const otherFields = normalizedEntries.filter(([, normalizedKey]) => !reservedKeys.has(normalizedKey))
 
   return (
     <div className="mx-auto max-w-2xl p-6">
@@ -40,6 +69,25 @@ function ContactDetailPage() {
         </div>
 
         <div className="mt-6 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-md border border-border px-3 py-3">
+              <div className="text-xs text-muted-foreground">Stage</div>
+              <div className="mt-1 text-sm font-medium">{stage || "Unspecified"}</div>
+            </div>
+            <div className="rounded-md border border-border px-3 py-3">
+              <div className="text-xs text-muted-foreground">Owner</div>
+              <div className="mt-1 text-sm font-medium">{owner || "Unassigned"}</div>
+            </div>
+            <div className="rounded-md border border-border px-3 py-3">
+              <div className="text-xs text-muted-foreground">Last Contacted</div>
+              <div className="mt-1 text-sm font-medium">{lastContactedAt || "Not recorded"}</div>
+            </div>
+            <div className="rounded-md border border-border px-3 py-3">
+              <div className="text-xs text-muted-foreground">Next Action</div>
+              <div className="mt-1 text-sm font-medium">{nextAction || "No next action"}</div>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
             <span className="text-xs text-muted-foreground">Sheet</span>
             <span className="text-xs font-medium">{contact.sheetTitle}</span>
@@ -48,7 +96,7 @@ function ContactDetailPage() {
             <span className="text-xs text-muted-foreground">Row</span>
             <span className="text-xs font-medium">{contact.rowNumber}</span>
           </div>
-          {otherFields.map(([key, value]) => (
+          {otherFields.map(([key, , value]) => (
             <div key={key} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
               <span className="text-xs text-muted-foreground capitalize">{key}</span>
               <span className="text-xs font-medium">{value}</span>

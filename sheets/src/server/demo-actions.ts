@@ -42,12 +42,12 @@ export const createSampleSheet = createServerFn({ method: "POST" }).handler(asyn
   const profile = await getUserProfile()
   const sheetId = await createSpreadsheet(
     "Contacts",
-    ["Name", "Email", "Company"],
+    ["Name", "Email", "Company", "Stage", "Owner", "Last Contacted At", "Next Action"],
     [
-      ["Alice Chen", profile.email, "Holaboss"],
-      ["Bob Smith", "bob@example.com", "Acme Corp"],
-      ["Carol Wang", "carol@example.com", "StartupXYZ"],
-      ["David Lee", "david@example.com", "TechFlow"],
+      ["Alice Chen", profile.email, "Holaboss", "Qualified", "You", "2026-04-02", "Send pricing follow-up"],
+      ["Bob Smith", "bob@example.com", "Acme Corp", "New", "Ava", "2026-03-30", "Research recent thread"],
+      ["Carol Wang", "carol@example.com", "StartupXYZ", "Nurturing", "Mia", "2026-03-28", "Draft follow-up email"],
+      ["David Lee", "david@example.com", "TechFlow", "Active", "Noah", "2026-04-01", "Confirm next meeting"],
     ],
   )
   return { sheetId }

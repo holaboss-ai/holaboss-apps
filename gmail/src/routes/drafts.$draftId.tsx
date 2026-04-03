@@ -43,6 +43,15 @@ function DraftDetailPage() {
       </div>
 
       <div className="space-y-4 rounded-xl border border-border bg-card/80 p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+            CRM workflow
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            This draft belongs to a contact follow-up flow. Review the draft, then return to the related CRM record to update stage, last contact date, and next action.
+          </p>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg border border-border/70 bg-background/70 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
