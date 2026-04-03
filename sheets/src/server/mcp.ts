@@ -4,7 +4,7 @@ import { createServer } from "node:http"
 import { z } from "zod"
 
 import { MODULE_CONFIG } from "../lib/types"
-import { getSheetInfo, readRows, readRange, updateCell, appendRow, createSpreadsheet } from "./google-api"
+import { getSheetInfo, readRows, readRange, updateCell, updateRow, appendRow, createSpreadsheet, listSpreadsheets, deleteRow, addSheet } from "./google-api"
 import { contactRef, publishContactRowOutput } from "./app-outputs"
 
 function text(data: unknown) {
@@ -59,18 +59,29 @@ function createMcpServer(): McpServer {
     }
   })
 
-  server.tool("sheets_read_rows", "Read all rows as objects (header-keyed). Optionally filter by column value.", {
+  server.tool("sheets_list_spreadsheets", "List the user's Google Sheets spreadsheets. Optionally search by name.", {
+    query: z.string().optional().describe("Search term to filter by spreadsheet name"),
+  }, async ({ query }) => {
+    try {
+      const sheets = await listSpreadsheets(query)
+      return text(sheets)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("sheets_read_rows", "Read all rows as objects (header-keyed). Optionally filter by column value (supports partial/contains matching).", {
     sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
     range: z.string().optional().describe("Sheet range (default: Sheet1)"),
     filter_column: z.string().optional().describe("Column name to filter by"),
-    filter_value: z.string().optional().describe("Value to match in filter_column"),
+    filter_value: z.string().optional().describe("Value to match in filter_column (partial match supported)"),
   }, async ({ sheet_id, range, filter_column, filter_value }) => {
     try {
       let rows = await readRows(sheet_id, range ?? "Sheet1")
       if (filter_column && filter_value) {
         const col = filter_column.trim().toLowerCase()
         const val = filter_value.trim().toLowerCase()
-        rows = rows.filter(r => r.values[col]?.toLowerCase() === val)
+        rows = rows.filter(r => r.values[col]?.toLowerCase().includes(val))
       }
       return text(rows)
     } catch (e) {
@@ -171,6 +182,74 @@ function createMcpServer(): McpServer {
       }
 
       return text(result)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("sheets_update_row", "Update an entire row by row number. Provide column-value pairs to update.", {
+    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
+    row_number: z.number().describe("Row number to update (first data row is 2)"),
+    values: z.record(z.string()).describe("Object of column_name → new_value pairs to update"),
+    range: z.string().optional().describe("Sheet range (default: Sheet1)"),
+    contact_name: z.string().optional().describe("Contact name if this is a CRM contact row update"),
+    contact_email: z.string().optional().describe("Contact email if this is a CRM contact row update"),
+  }, async ({ sheet_id, row_number, values, range, contact_name, contact_email }) => {
+    try {
+      const sheetName = range ?? "Sheet1"
+      const info = await getSheetInfo(sheet_id)
+      const headers = info.headers ?? []
+      await updateRow(sheet_id, row_number, headers.length, values, headers)
+      const result: Record<string, unknown> = { updated: true, row_number, values }
+
+      if (contact_name || contact_email) {
+        const name = contact_name ?? ""
+        const email = contact_email ?? ""
+        if (name || email) {
+          const ref = contactRef(sheet_id, sheetName, row_number)
+          try {
+            const outputId = await publishContactRowOutput({
+              ref,
+              name: name || email,
+              email,
+              spreadsheetId: sheet_id,
+              sheetName,
+              rowNumber: row_number,
+              action: "Updated CRM contact",
+            })
+            if (outputId) result.output_id = outputId
+          } catch {
+            // non-fatal
+          }
+        }
+      }
+
+      return text(result)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("sheets_delete_row", "Delete a row by row number", {
+    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
+    row_number: z.number().describe("Row number to delete (first data row is 2)"),
+    range: z.string().optional().describe("Sheet tab name (default: Sheet1)"),
+  }, async ({ sheet_id, row_number, range }) => {
+    try {
+      await deleteRow(sheet_id, range ?? "Sheet1", row_number)
+      return text({ deleted: true, row_number })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("sheets_add_sheet", "Add a new sheet tab to an existing spreadsheet", {
+    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
+    title: z.string().describe("Name for the new sheet tab"),
+  }, async ({ sheet_id, title }) => {
+    try {
+      const result = await addSheet(sheet_id, title)
+      return text({ added: true, ...result })
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }

@@ -107,4 +107,61 @@ export async function createSpreadsheet(title: string, headers: string[], rows: 
   return sheetId
 }
 
+const DRIVE_FILES = "https://www.googleapis.com/drive/v3/files"
+
+export async function listSpreadsheets(query?: string): Promise<Array<{ id: string; name: string; modifiedTime: string }>> {
+  let q = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+  if (query) {
+    const escaped = query.replace(/'/g, "\\'")
+    q += ` and name contains '${escaped}'`
+  }
+  const data = await gfetch<{ files?: Array<{ id: string; name: string; modifiedTime: string }> }>(
+    `${DRIVE_FILES}?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=50`,
+  )
+  return data.files ?? []
+}
+
+export async function deleteRow(sheetId: string, sheetTabName: string, rowNumber: number): Promise<void> {
+  // Resolve the numeric sheet (tab) ID from the tab name
+  const meta = await gfetch<{ sheets: Array<{ properties: { title: string; sheetId: number } }> }>(
+    `${SHEETS_BASE}/${sheetId}?fields=sheets.properties`,
+  )
+  const tab = meta.sheets.find(s => s.properties.title.toLowerCase() === sheetTabName.toLowerCase())
+  if (!tab) {
+    throw new Error(`Sheet tab "${sheetTabName}" not found`)
+  }
+
+  await gfetch(`${SHEETS_BASE}/${sheetId}:batchUpdate`, {
+    method: "POST",
+    body: {
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId: tab.properties.sheetId,
+            dimension: "ROWS",
+            startIndex: rowNumber - 1,
+            endIndex: rowNumber,
+          },
+        },
+      }],
+    },
+  })
+}
+
+export async function addSheet(sheetId: string, title: string): Promise<{ sheetId: number; title: string }> {
+  const data = await gfetch<{ replies: Array<{ addSheet: { properties: { sheetId: number; title: string } } }> }>(
+    `${SHEETS_BASE}/${sheetId}:batchUpdate`,
+    {
+      method: "POST",
+      body: {
+        requests: [{
+          addSheet: { properties: { title } },
+        }],
+      },
+    },
+  )
+  const added = data.replies?.[0]?.addSheet?.properties
+  return { sheetId: added?.sheetId ?? 0, title: added?.title ?? title }
+}
+
 export { colLetter }
