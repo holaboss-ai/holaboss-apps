@@ -2,7 +2,9 @@ import type { DraftRecord } from "../lib/types"
 import {
   buildAppResourcePresentation,
   createAppOutput,
+  publishSessionArtifact,
   updateAppOutput,
+  type HolabossTurnContext,
 } from "./holaboss-bridge"
 
 function normalizedContactKey(email: string): string {
@@ -99,6 +101,7 @@ export function buildDraftOutputMetadata(
 export async function syncDraftOutput(
   draft: DraftRecord,
   crm?: { contactRowRef?: string | null },
+  context?: HolabossTurnContext | null,
 ) {
   const title = buildDraftOutputTitle(draft)
   const metadata = buildDraftOutputMetadata(draft, crm)
@@ -113,17 +116,21 @@ export async function syncDraftOutput(
     return draft.output_id
   }
 
-  const output = await createAppOutput({
-    outputType: "draft",
+  if (!context) {
+    return null
+  }
+
+  const artifact = await publishSessionArtifact(context, {
+    artifactType: "draft",
+    externalId: draft.id,
     title,
     moduleId: "gmail",
     moduleResourceId: draft.id,
     platform: "google",
-    status: draft.status,
     metadata,
   })
 
-  return output?.id ?? null
+  return artifact?.output_id ?? null
 }
 
 export async function syncThreadOutput(input: ThreadOutputInput) {

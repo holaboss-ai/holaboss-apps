@@ -4,6 +4,7 @@ export interface PostRecord {
   content: string
   subreddit: string
   status: "draft" | "queued" | "scheduled" | "published" | "failed"
+  output_id?: string | null
   external_post_id?: string
   scheduled_at?: string
   published_at?: string

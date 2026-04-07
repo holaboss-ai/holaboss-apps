@@ -9,6 +9,7 @@ import { MODULE_CONFIG } from "../lib/types"
 import { syncDraftOutput, syncThreadOutput } from "./app-outputs"
 import { getDb } from "./db"
 import { listThreads, getThread, parseMessage, sendEmail } from "./google-api"
+import { resolveHolabossTurnContext } from "./holaboss-bridge"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
 function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
@@ -103,7 +104,7 @@ function createMcpServer(): McpServer {
     body: z.string().describe("Email body text"),
     thread_id: z.string().optional().describe("Gmail thread ID if this is a reply"),
     contact_row_ref: z.string().optional().describe("Optional Sheets contact row reference for CRM linking"),
-  }, async ({ to_email, subject, body, thread_id, contact_row_ref }) => {
+  }, async ({ to_email, subject, body, thread_id, contact_row_ref }, extra) => {
     try {
       const db = getDb()
       const id = randomUUID()
@@ -111,14 +112,20 @@ function createMcpServer(): McpServer {
         "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
       ).run(id, to_email, thread_id ?? null, subject ?? null, body)
       let draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
       try {
-        const outputId = await syncDraftOutput(draft, { contactRowRef: contact_row_ref ?? null })
+        const outputId = await syncDraftOutput(
+          draft,
+          { contactRowRef: contact_row_ref ?? null },
+          context,
+        )
         if (outputId && outputId !== draft.output_id) {
           persistDraftOutputId(db, draft.id, outputId)
           draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
         }
       } catch (outputError) {
-        console.warn("[gmail] failed to sync draft output", outputError)
+        db.prepare("DELETE FROM drafts WHERE id = ?").run(id)
+        throw outputError
       }
       return text(draft)
     } catch (e) {

@@ -6,8 +6,17 @@ import { z } from "zod"
 
 import type { PostRecord } from "../lib/types"
 import { TWITTER_CONFIG } from "../lib/types"
+import { syncPostDraftArtifact } from "./app-outputs"
 import { getDb } from "./db"
+import { resolveHolabossTurnContext } from "./holaboss-bridge"
 import { enqueuePublish, getQueueStats } from "./queue"
+
+function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
+function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
+
+function persistOutputId(db: ReturnType<typeof getDb>, postId: string, outputId: string) {
+  db.prepare("UPDATE posts SET output_id = ? WHERE id = ?").run(outputId, postId)
+}
 
 function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -18,14 +27,34 @@ function createMcpServer(): McpServer {
   server.tool("twitter_create_post", "Create a new tweet draft", {
     content: z.string().describe("Tweet content"),
     scheduled_at: z.string().optional().describe("ISO 8601 schedule time"),
-  }, async ({ content, scheduled_at }) => {
-    const db = getDb()
-    const id = randomUUID()
-    const now = new Date().toISOString()
-    db.prepare(
-      "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
-    ).run(id, content, scheduled_at ?? null, now, now)
-    return { content: [{ type: "text" as const, text: JSON.stringify({ id, content, status: "draft", scheduled_at }) }] }
+  }, async ({ content, scheduled_at }, extra) => {
+    try {
+      const db = getDb()
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      db.prepare(
+        "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
+      ).run(id, content, scheduled_at ?? null, now, now)
+
+      let post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
+      if (context) {
+        try {
+          const outputId = await syncPostDraftArtifact(post, context)
+          if (outputId && outputId !== post.output_id) {
+            persistOutputId(db, post.id, outputId)
+            post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+          }
+        } catch (artifactError) {
+          db.prepare("DELETE FROM posts WHERE id = ?").run(id)
+          throw artifactError
+        }
+      }
+
+      return text(post)
+    } catch (error) {
+      return err(error instanceof Error ? error.message : String(error))
+    }
   })
 
   server.tool("twitter_update_post", "Update a draft tweet", {

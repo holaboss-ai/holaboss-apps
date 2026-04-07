@@ -27,6 +27,7 @@ function migrate(db: Database.Database) {
       content TEXT NOT NULL DEFAULT '',
       subreddit TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'draft',
+      output_id TEXT,
       external_post_id TEXT,
       scheduled_at TEXT,
       published_at TEXT,
@@ -37,6 +38,7 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
     CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_posts_output_id ON posts(output_id);
 
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -53,4 +55,13 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_jobs_status_run_at ON jobs(status, run_at);
   `)
+
+  if (!hasColumn(db, "posts", "output_id")) {
+    db.exec("ALTER TABLE posts ADD COLUMN output_id TEXT")
+  }
+}
+
+function hasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+  return columns.some((column) => column.name === columnName)
 }

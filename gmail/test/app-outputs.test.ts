@@ -21,6 +21,77 @@ afterEach(() => {
 })
 
 describe("Holaboss bridge app outputs", () => {
+  it("publishes a draft artifact against the active session turn", async () => {
+    process.env.WORKSPACE_API_URL = "http://127.0.0.1:4567/api/v1"
+    process.env.HOLABOSS_WORKSPACE_ID = "workspace-1"
+
+    const fetchMock = vi.fn()
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          artifact: {
+            id: "artifact-1",
+            output_id: "output-1",
+            session_id: "session-99",
+            workspace_id: "workspace-1",
+            input_id: "input-42",
+            artifact_type: "draft",
+            external_id: "draft-42",
+            platform: "google",
+            title: "Follow up",
+            metadata: {
+              presentation: {
+                kind: "app_resource",
+                view: "drafts",
+                path: "/drafts/draft-42",
+              },
+            },
+            created_at: "2026-04-01T00:00:00.000Z",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const {
+      buildAppResourcePresentation,
+      publishSessionArtifact,
+    } = await import("../src/server/holaboss-bridge")
+
+    const artifact = await publishSessionArtifact(
+      {
+        workspaceId: "workspace-1",
+        sessionId: "session-99",
+        inputId: "input-42",
+      },
+      {
+        artifactType: "draft",
+        externalId: "draft-42",
+        title: "Follow up",
+        moduleId: "gmail",
+        moduleResourceId: "draft-42",
+        platform: "google",
+        metadata: {
+          presentation: buildAppResourcePresentation({
+            view: "drafts",
+            path: "/drafts/draft-42",
+          }),
+        },
+      },
+    )
+
+    expect(artifact?.output_id).toBe("output-1")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const [createUrl, createInit] = fetchMock.mock.calls[0]!
+    expect(createUrl).toBe("http://127.0.0.1:4567/api/v1/agent-sessions/session-99/artifacts")
+    expect((createInit?.headers as Record<string, string>)["x-holaboss-workspace-id"]).toBe("workspace-1")
+    expect(String(createInit?.body ?? "")).toContain("\"input_id\":\"input-42\"")
+    expect(String(createInit?.body ?? "")).toContain("\"module_id\":\"gmail\"")
+    expect(String(createInit?.body ?? "")).toContain("\"module_resource_id\":\"draft-42\"")
+  })
+
   it("creates and normalizes an app output with presentation metadata", async () => {
     process.env.WORKSPACE_API_URL = "http://127.0.0.1:4567/api/v1"
     process.env.HOLABOSS_WORKSPACE_ID = "workspace-1"
