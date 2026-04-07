@@ -26,14 +26,36 @@ function migrate(db: Database.Database) {
       status TEXT NOT NULL DEFAULT 'pending',
       output_id TEXT,
       sent_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
     CREATE INDEX IF NOT EXISTS idx_drafts_output_id ON drafts(output_id);
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL DEFAULT 'send',
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      run_at TEXT NOT NULL DEFAULT (datetime('now')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_status_run_at ON jobs(status, run_at);
   `)
 
   if (!hasColumn(db, "drafts", "output_id")) {
     db.exec("ALTER TABLE drafts ADD COLUMN output_id TEXT")
+  }
+  if (!hasColumn(db, "drafts", "error_message")) {
+    db.exec("ALTER TABLE drafts ADD COLUMN error_message TEXT")
+  }
+  if (!hasColumn(db, "drafts", "updated_at")) {
+    db.exec("ALTER TABLE drafts ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))")
   }
 }
 

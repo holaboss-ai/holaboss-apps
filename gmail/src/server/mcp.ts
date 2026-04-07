@@ -8,7 +8,8 @@ import type { DraftRecord } from "../lib/types"
 import { MODULE_CONFIG } from "../lib/types"
 import { syncDraftOutput, syncThreadOutput } from "./app-outputs"
 import { getDb } from "./db"
-import { listThreads, getThread, parseMessage, sendEmail } from "./google-api"
+import { listThreads, getThread, parseMessage } from "./google-api"
+import { enqueueSend } from "./queue"
 import { resolveHolabossTurnContext } from "./holaboss-bridge"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
@@ -133,53 +134,125 @@ function createMcpServer(): McpServer {
     }
   })
 
-  server.tool("gmail_send_draft", "Send a pending draft via Gmail API", {
+  server.tool("gmail_send_draft", "Send a pending draft via Gmail API. The email is queued and sent with automatic retries.", {
     draft_id: z.string().describe("Local draft ID"),
   }, async ({ draft_id }) => {
     try {
       const db = getDb()
       const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
       if (!draft) return err("Draft not found")
-      if (draft.status !== "pending") return err(`Draft is not pending (status: ${draft.status})`)
+      if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be sent (status: ${draft.status})`)
 
-      const result = await sendEmail({
-        to: draft.to_email,
+      const holabossUserId = process.env.HOLABOSS_USER_ID ?? ""
+      const jobId = enqueueSend({
+        draft_id: draft.id,
+        to_email: draft.to_email,
         subject: draft.subject ?? "",
         body: draft.body,
-        threadId: draft.gmail_thread_id ?? undefined,
+        thread_id: draft.gmail_thread_id ?? undefined,
+        holaboss_user_id: holabossUserId,
       })
 
       db.prepare(
-        "UPDATE drafts SET status = 'sent', sent_at = datetime('now') WHERE id = ?",
+        "UPDATE drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
       ).run(draft_id)
-      const updatedDraft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
-      try {
-        await syncDraftOutput(updatedDraft)
-      } catch (outputError) {
-        console.warn("[gmail] failed to update draft output", outputError)
-      }
 
       return text({
         draft_id,
-        message_id: result.id,
-        thread_id: result.threadId,
-        output_id: updatedDraft.output_id,
-        status: "sent",
+        job_id: jobId,
+        output_id: draft.output_id,
+        status: "queued",
       })
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))
     }
   })
 
-  server.tool("gmail_list_drafts", "List pending email drafts", {
-    status: z.string().optional().describe("Filter by status (pending, sent, discarded). Default: pending"),
+  server.tool("gmail_update_draft", "Update the content of a pending email draft.", {
+    draft_id: z.string().describe("Local draft ID"),
+    to_email: z.string().optional().describe("New recipient email"),
+    subject: z.string().optional().describe("New subject"),
+    body: z.string().optional().describe("New body text"),
+    thread_id: z.string().optional().describe("Gmail thread ID to link as reply"),
+  }, async ({ draft_id, to_email, subject, body, thread_id }) => {
+    try {
+      const db = getDb()
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+      if (!draft) return err("Draft not found")
+      if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be edited (status: ${draft.status})`)
+
+      db.prepare(`
+        UPDATE drafts SET
+          to_email = COALESCE(?, to_email),
+          subject = COALESCE(?, subject),
+          body = COALESCE(?, body),
+          gmail_thread_id = COALESCE(?, gmail_thread_id),
+          status = 'pending',
+          error_message = NULL,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(to_email ?? null, subject ?? null, body ?? null, thread_id ?? null, draft_id)
+
+      const updated = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
+      try {
+        await syncDraftOutput(updated)
+      } catch (outputError) {
+        console.warn("[gmail] failed to sync draft output after update", outputError)
+      }
+      return text(updated)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("gmail_get_send_status", "Check the send status of a draft", {
+    draft_id: z.string().describe("Local draft ID"),
+  }, async ({ draft_id }) => {
+    try {
+      const db = getDb()
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+      if (!draft) return err("Draft not found")
+      return text({
+        draft_id,
+        status: draft.status,
+        error_message: draft.error_message,
+        sent_at: draft.sent_at,
+        updated_at: draft.updated_at,
+      })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("gmail_delete_draft", "Delete an email draft. Only pending or failed drafts can be deleted.", {
+    draft_id: z.string().describe("Local draft ID"),
+  }, async ({ draft_id }) => {
+    try {
+      const db = getDb()
+      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+      if (!draft) return err("Draft not found")
+      if (draft.status === "queued") return err("Cannot delete a draft that is currently being sent")
+      if (draft.status === "sent") return err("Cannot delete a sent email")
+      db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
+      return text({ deleted: true, draft_id })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  server.tool("gmail_list_drafts", "List email drafts", {
+    status: z.string().optional().describe("Filter by status (pending, queued, sent, failed, discarded). Omit to list all."),
     limit: z.number().optional().describe("Max results, default 20"),
   }, async ({ status, limit }) => {
     try {
       const db = getDb()
       const max = limit ?? 20
-      const filterStatus = status ?? "pending"
-      const rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(filterStatus, max) as DraftRecord[]
+      let rows: DraftRecord[]
+      if (status) {
+        rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as DraftRecord[]
+      } else {
+        rows = db.prepare("SELECT * FROM drafts ORDER BY created_at DESC LIMIT ?").all(max) as DraftRecord[]
+      }
       return text(rows)
     } catch (e) {
       return err(e instanceof Error ? e.message : String(e))

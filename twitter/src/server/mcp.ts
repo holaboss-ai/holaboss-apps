@@ -142,6 +142,18 @@ function createMcpServer(): McpServer {
     return { content: [{ type: "text" as const, text: JSON.stringify({ cancelled: true }) }] }
   })
 
+  server.tool("twitter_delete_post", "Delete a tweet draft. Only draft or failed posts can be deleted.", {
+    post_id: z.string().describe("Post ID to delete"),
+  }, async ({ post_id }) => {
+    const db = getDb()
+    const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+    if (!post) return err("Post not found")
+    if (post.status === "queued" || post.status === "scheduled") return err(`Cannot delete post in '${post.status}' state. Cancel it first.`)
+    if (post.status === "published") return err("Cannot delete a published post")
+    db.prepare("DELETE FROM posts WHERE id = ?").run(post_id)
+    return text({ deleted: true, post_id })
+  })
+
   server.tool("twitter_get_queue_stats", "Get Twitter publish queue statistics", {}, async () => {
     const stats = await getQueueStats()
     return { content: [{ type: "text" as const, text: JSON.stringify(stats) }] }

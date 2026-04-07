@@ -26,5 +26,4 @@ integration:
 
 env_contract:
   - "HOLABOSS_USER_ID"
-  - "PLATFORM_INTEGRATION_TOKEN"
   - "WORKSPACE_API_URL"

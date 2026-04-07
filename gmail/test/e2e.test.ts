@@ -206,8 +206,10 @@ describe("Gmail Module E2E", () => {
         body: "Body",
         status: "pending",
         output_id: null,
+        error_message: null,
         sent_at: null,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
 
       expect(buildDraftOutputTitle(draft)).toBe("Follow up")

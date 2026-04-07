@@ -14,13 +14,11 @@ export interface PublishOutput {
 export class ModulePublisher {
   private readonly workspaceApiUrl: string
   private readonly integrationId: string
-  private readonly integrationToken: string
 
   constructor() {
     const raw = process.env.WORKSPACE_API_URL ?? "http://localhost:3033"
     this.workspaceApiUrl = raw.replace(/\/+$/, "")
     this.integrationId = process.env.INTEGRATION_ID ?? ""
-    this.integrationToken = process.env.PLATFORM_INTEGRATION_TOKEN ?? ""
   }
 
   async publish(input: PublishInput): Promise<PublishOutput> {
@@ -93,9 +91,6 @@ export class ModulePublisher {
   private headers() {
     return {
       "Content-Type": "application/json",
-      ...(this.integrationToken
-        ? { Authorization: `Bearer ${this.integrationToken}` }
-        : {}),
     }
   }
 }

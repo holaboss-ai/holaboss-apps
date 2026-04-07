@@ -31,7 +31,6 @@ export async function listUserRepos(username?: string, perPage = 10) {
       private: r.private as boolean,
     }))
   } catch (err) {
-    if (err instanceof Error && err.message.includes("PLATFORM_INTEGRATION_TOKEN")) throw err
     throw err
   }
 }
