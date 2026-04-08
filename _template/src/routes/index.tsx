@@ -4,6 +4,11 @@ import { useState } from "react"
 import { Button } from "../components/ui/button"
 import { createPost, fetchPosts } from "../server/actions"
 
+/** SQLite datetime('now') stores UTC without timezone marker — append Z so JS parses as UTC */
+function utc(dateStr: string): Date {
+  return new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`)
+}
+
 const statusFilters = ["all", "draft", "scheduled", "queued", "published", "failed"] as const
 
 const statusStyles: Record<string, string> = {
@@ -93,17 +98,17 @@ function PostsPage() {
               </span>
               {post.scheduled_at && (
                 <span className="text-muted-foreground text-xs">
-                  {new Date(post.scheduled_at).toLocaleString()}
+                  {utc(post.scheduled_at).toLocaleString()}
                 </span>
               )}
               {post.published_at && (
                 <span className="text-muted-foreground text-xs">
-                  {new Date(post.published_at).toLocaleString()}
+                  {utc(post.published_at).toLocaleString()}
                 </span>
               )}
               {!post.scheduled_at && !post.published_at && (
                 <span className="text-muted-foreground text-xs">
-                  {new Date(post.created_at).toLocaleString()}
+                  {utc(post.created_at).toLocaleString()}
                 </span>
               )}
             </div>

@@ -23,7 +23,9 @@ export function enqueuePublish(payload: PublishJobPayload): string {
 
   const isDelayed = payload.scheduled_at && new Date(payload.scheduled_at).getTime() > Date.now()
   const status = isDelayed ? "delayed" : "waiting"
-  const runAt = isDelayed ? payload.scheduled_at! : new Date().toISOString()
+  const runAt = isDelayed
+    ? payload.scheduled_at!.replace("T", " ").replace("Z", "")
+    : new Date().toISOString().replace("T", " ").replace("Z", "")
 
   db.prepare(
     "INSERT INTO jobs (id, type, payload, status, run_at) VALUES (?, 'publish', ?, ?, ?)",

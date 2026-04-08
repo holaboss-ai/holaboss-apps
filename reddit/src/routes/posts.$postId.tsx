@@ -34,8 +34,13 @@ const statusStyles: Record<string, string> = {
   scheduled: "bg-purple-500/10 text-purple-600",
 }
 
+/** SQLite datetime('now') stores UTC without timezone marker — append Z so JS parses as UTC */
+function utc(dateStr: string): Date {
+  return new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`)
+}
+
 function isoToDatetimeLocal(iso: string): string {
-  const d = new Date(iso)
+  const d = utc(iso)
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
@@ -241,9 +246,9 @@ function PostEditor({ post }: { post: PostRecord }) {
       </div>
 
       <div className="text-muted-foreground mt-6 text-xs">
-        <p>Created {new Date(post.created_at).toLocaleString()}</p>
+        <p>Created {utc(post.created_at).toLocaleString()}</p>
         {post.updated_at !== post.created_at && (
-          <p>Updated {new Date(post.updated_at).toLocaleString()}</p>
+          <p>Updated {utc(post.updated_at).toLocaleString()}</p>
         )}
       </div>
     </div>
@@ -314,7 +319,7 @@ function PostDetail({ post }: { post: PostRecord }) {
           <div>
             <p className="text-xs font-medium text-purple-600">Scheduled for</p>
             <p className="text-sm">
-              {new Date(post.scheduled_at).toLocaleString()}
+              {utc(post.scheduled_at).toLocaleString()}
             </p>
           </div>
           <Button variant="outline" size="xs" onClick={handleCancelSchedule}>
@@ -336,7 +341,7 @@ function PostDetail({ post }: { post: PostRecord }) {
         <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/5 p-3">
           <p className="text-xs font-medium text-green-600">Published</p>
           <p className="text-sm">
-            {new Date(post.published_at).toLocaleString()}
+            {utc(post.published_at).toLocaleString()}
           </p>
           {post.external_post_id && (
             <p className="text-muted-foreground mt-1 text-xs">
@@ -347,9 +352,9 @@ function PostDetail({ post }: { post: PostRecord }) {
       )}
 
       <div className="text-muted-foreground mt-6 text-xs">
-        <p>Created {new Date(post.created_at).toLocaleString()}</p>
+        <p>Created {utc(post.created_at).toLocaleString()}</p>
         {post.updated_at !== post.created_at && (
-          <p>Updated {new Date(post.updated_at).toLocaleString()}</p>
+          <p>Updated {utc(post.updated_at).toLocaleString()}</p>
         )}
       </div>
     </div>
