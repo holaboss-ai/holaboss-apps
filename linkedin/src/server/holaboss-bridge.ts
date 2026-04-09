@@ -11,11 +11,14 @@ export {
   createIntegrationClient,
   publishSessionArtifact,
   resolveHolabossTurnContext,
+  syncAppResourceOutput,
   updateAppOutput,
 } from "@holaboss/bridge"
 
 export type {
   AppOutputPresentationInput,
+  AppResourceOutputInput,
+  AppResourceOutputResult,
   CreateAppOutputRequest,
   HolabossTurnContext,
   IntegrationClient,

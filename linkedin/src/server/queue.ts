@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 
-import type { PublishJobPayload } from "../lib/types"
+import type { PostRecord, PublishJobPayload } from "../lib/types"
+import { syncPostOutputAndPersist } from "./app-outputs"
 import { getDb } from "./db"
 import { LinkedInPublisher } from "./publisher"
 
@@ -49,6 +50,17 @@ export function getQueueStats() {
   return stats
 }
 
+async function syncPostOutputAfterTransition(
+  db: ReturnType<typeof getDb>,
+  postId: string,
+): Promise<void> {
+  const post = db
+    .prepare("SELECT * FROM posts WHERE id = ?")
+    .get(postId) as PostRecord | undefined
+  if (!post) return
+  await syncPostOutputAndPersist(db, post, null)
+}
+
 const POLL_INTERVAL_MS = 3000
 
 export function startWorker() {
@@ -78,6 +90,7 @@ export function startWorker() {
 
       // Update post status to queued
       db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(payload.post_id)
+      void syncPostOutputAfterTransition(db, payload.post_id)
 
       publisher
         .publish({
@@ -92,6 +105,7 @@ export function startWorker() {
           db.prepare(
             "UPDATE posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
           ).run(result.external_post_id, payload.post_id)
+          void syncPostOutputAfterTransition(db, payload.post_id)
         })
         .catch((err) => {
           const message = err instanceof Error ? err.message : String(err)
@@ -106,6 +120,7 @@ export function startWorker() {
             db.prepare(
               "UPDATE posts SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?",
             ).run(message, payload.post_id)
+            void syncPostOutputAfterTransition(db, payload.post_id)
           }
           console.error(`[worker] job ${job.id} failed:`, message)
         })
