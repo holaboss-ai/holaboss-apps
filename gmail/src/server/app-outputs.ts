@@ -1,9 +1,7 @@
 import type { DraftRecord } from "../lib/types"
 import {
   buildAppResourcePresentation,
-  createAppOutput,
-  publishSessionArtifact,
-  updateAppOutput,
+  syncAppResourceOutput,
   type HolabossTurnContext,
 } from "./holaboss-bridge"
 
@@ -18,6 +16,41 @@ export function draftRoutePath(draftId: string): string {
 export function buildDraftOutputTitle(draft: DraftRecord): string {
   const subject = (draft.subject ?? "").trim()
   return subject || `Draft to ${draft.to_email}`
+}
+
+function buildDraftCrmMetadata(
+  draft: DraftRecord,
+  crm?: { contactRowRef?: string | null },
+): Record<string, unknown> {
+  return {
+    contact_key: normalizedContactKey(draft.to_email),
+    primary_email: draft.to_email,
+    ...(crm?.contactRowRef ? { contact_row_ref: crm.contactRowRef } : {}),
+  }
+}
+
+/**
+ * Exposed for tests and any callers that inspect the raw metadata envelope.
+ * The shape is mirrored by `syncAppResourceOutput` when `syncDraftOutput`
+ * delegates to the SDK, so both paths produce identical output.
+ */
+export function buildDraftOutputMetadata(
+  draft: DraftRecord,
+  crm?: { contactRowRef?: string | null },
+): Record<string, unknown> {
+  return {
+    source_kind: "application",
+    presentation: buildAppResourcePresentation({
+      view: "drafts",
+      path: draftRoutePath(draft.id),
+    }),
+    resource: {
+      entity_type: "draft",
+      entity_id: draft.id,
+      label: buildDraftOutputTitle(draft),
+    },
+    crm: buildDraftCrmMetadata(draft, crm),
+  }
 }
 
 export interface ThreadOutputInput {
@@ -44,10 +77,31 @@ export function buildThreadOutputTitle(input: ThreadOutputInput): string {
   return `Thread ${input.threadId}`
 }
 
-export function buildThreadOutputMetadata(
+function buildThreadCrmMetadata(
   input: ThreadOutputInput,
 ): Record<string, unknown> {
   const primaryEmail = (input.primaryEmail ?? "").trim()
+  return {
+    ...(primaryEmail
+      ? {
+          contact_key: normalizedContactKey(primaryEmail),
+          primary_email: primaryEmail,
+        }
+      : {}),
+    ...(input.contactRowRef
+      ? { contact_row_ref: input.contactRowRef }
+      : {}),
+  }
+}
+
+/**
+ * Exposed for tests and any callers that inspect the raw metadata envelope.
+ * The shape is mirrored by `syncAppResourceOutput` when `syncThreadOutput`
+ * delegates to the SDK, so both paths produce identical output.
+ */
+export function buildThreadOutputMetadata(
+  input: ThreadOutputInput,
+): Record<string, unknown> {
   return {
     source_kind: "application",
     presentation: buildAppResourcePresentation({
@@ -59,42 +113,7 @@ export function buildThreadOutputMetadata(
       entity_id: input.threadId,
       label: buildThreadOutputTitle(input),
     },
-    crm: {
-      ...(primaryEmail
-        ? {
-            contact_key: normalizedContactKey(primaryEmail),
-            primary_email: primaryEmail,
-          }
-        : {}),
-      ...(input.contactRowRef
-        ? {
-            contact_row_ref: input.contactRowRef,
-          }
-        : {}),
-    },
-  }
-}
-
-export function buildDraftOutputMetadata(
-  draft: DraftRecord,
-  crm?: { contactRowRef?: string | null },
-): Record<string, unknown> {
-  return {
-    source_kind: "application",
-    presentation: buildAppResourcePresentation({
-      view: "drafts",
-      path: draftRoutePath(draft.id),
-    }),
-    resource: {
-      entity_type: "draft",
-      entity_id: draft.id,
-      label: buildDraftOutputTitle(draft),
-    },
-    crm: {
-      contact_key: normalizedContactKey(draft.to_email),
-      primary_email: draft.to_email,
-      ...(crm?.contactRowRef ? { contact_row_ref: crm.contactRowRef } : {}),
-    },
+    crm: buildThreadCrmMetadata(input),
   }
 }
 
@@ -102,60 +121,42 @@ export async function syncDraftOutput(
   draft: DraftRecord,
   crm?: { contactRowRef?: string | null },
   context?: HolabossTurnContext | null,
-) {
-  const title = buildDraftOutputTitle(draft)
-  const metadata = buildDraftOutputMetadata(draft, crm)
-
-  if (draft.output_id) {
-    await updateAppOutput(draft.output_id, {
-      title,
-      status: draft.status,
-      moduleResourceId: draft.id,
-      metadata,
-    })
-    return draft.output_id
-  }
-
-  if (!context) {
-    return null
-  }
-
-  const artifact = await publishSessionArtifact(context, {
-    artifactType: "draft",
-    externalId: draft.id,
-    title,
+): Promise<string | null> {
+  const { outputId } = await syncAppResourceOutput(context ?? null, {
     moduleId: "gmail",
-    moduleResourceId: draft.id,
     platform: "google",
-    metadata,
+    artifactType: "draft",
+    existingOutputId: draft.output_id ?? null,
+    status: draft.status,
+    resource: {
+      entityType: "draft",
+      entityId: draft.id,
+      title: buildDraftOutputTitle(draft),
+      view: "drafts",
+      path: draftRoutePath(draft.id),
+    },
+    extraMetadata: { crm: buildDraftCrmMetadata(draft, crm) },
   })
-
-  return artifact?.output_id ?? null
+  return outputId
 }
 
-export async function syncThreadOutput(input: ThreadOutputInput) {
-  const title = buildThreadOutputTitle(input)
-  const metadata = buildThreadOutputMetadata(input)
-
-  if (input.existingOutputId) {
-    await updateAppOutput(input.existingOutputId, {
-      title,
-      status: "ready",
-      moduleResourceId: input.threadId,
-      metadata,
-    })
-    return input.existingOutputId
-  }
-
-  const output = await createAppOutput({
-    outputType: "thread",
-    title,
+export async function syncThreadOutput(
+  input: ThreadOutputInput,
+): Promise<string | null> {
+  const { outputId } = await syncAppResourceOutput(null, {
     moduleId: "gmail",
-    moduleResourceId: input.threadId,
     platform: "google",
+    outputType: "thread",
+    existingOutputId: input.existingOutputId ?? null,
     status: "ready",
-    metadata,
+    resource: {
+      entityType: "thread",
+      entityId: input.threadId,
+      title: buildThreadOutputTitle(input),
+      view: "threads",
+      path: threadRoutePath(input.threadId),
+    },
+    extraMetadata: { crm: buildThreadCrmMetadata(input) },
   })
-
-  return output?.id ?? null
+  return outputId
 }
