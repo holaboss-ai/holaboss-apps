@@ -6,16 +6,24 @@ import { z } from "zod"
 
 import type { PostRecord } from "../lib/types"
 import { TWITTER_CONFIG } from "../lib/types"
-import { syncPostDraftArtifact } from "./app-outputs"
+import { syncPostOutputAndPersist } from "./app-outputs"
 import { getDb } from "./db"
-import { resolveHolabossTurnContext } from "./holaboss-bridge"
+import {
+  resolveHolabossTurnContext,
+  updateAppOutput,
+} from "./holaboss-bridge"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
 function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
 
-function persistOutputId(db: ReturnType<typeof getDb>, postId: string, outputId: string) {
-  db.prepare("UPDATE posts SET output_id = ? WHERE id = ?").run(outputId, postId)
+async function syncAndPersist(
+  db: ReturnType<typeof getDb>,
+  post: PostRecord,
+  headers: Parameters<typeof resolveHolabossTurnContext>[0],
+): Promise<PostRecord> {
+  const context = resolveHolabossTurnContext(headers)
+  return syncPostOutputAndPersist(db, post, context)
 }
 
 function createMcpServer(): McpServer {
@@ -36,22 +44,9 @@ function createMcpServer(): McpServer {
         "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
       ).run(id, content, scheduled_at ?? null, now, now)
 
-      let post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
-      const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
-      if (context) {
-        try {
-          const outputId = await syncPostDraftArtifact(post, context)
-          if (outputId && outputId !== post.output_id) {
-            persistOutputId(db, post.id, outputId)
-            post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
-          }
-        } catch (artifactError) {
-          db.prepare("DELETE FROM posts WHERE id = ?").run(id)
-          throw artifactError
-        }
-      }
-
-      return text(post)
+      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      const synced = await syncAndPersist(db, post, extra.requestInfo?.headers)
+      return text(synced)
     } catch (error) {
       return err(error instanceof Error ? error.message : String(error))
     }
@@ -61,7 +56,7 @@ function createMcpServer(): McpServer {
     post_id: z.string().describe("Post ID"),
     content: z.string().optional().describe("New content"),
     scheduled_at: z.string().optional().describe("New schedule time"),
-  }, async ({ post_id, content, scheduled_at }) => {
+  }, async ({ post_id, content, scheduled_at }, extra) => {
     const db = getDb()
     const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
     if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
@@ -73,8 +68,9 @@ function createMcpServer(): McpServer {
     params.push(post_id)
 
     db.prepare(`UPDATE posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
-    const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id)
-    return { content: [{ type: "text" as const, text: JSON.stringify(updated) }] }
+    const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+    const synced = await syncAndPersist(db, updated, extra.requestInfo?.headers)
+    return { content: [{ type: "text" as const, text: JSON.stringify(synced) }] }
   })
 
   server.tool("twitter_list_posts", "List tweets", {
@@ -103,7 +99,7 @@ function createMcpServer(): McpServer {
 
   server.tool("twitter_publish_post", "Publish a tweet immediately or schedule it", {
     post_id: z.string().describe("Post ID to publish"),
-  }, async ({ post_id }) => {
+  }, async ({ post_id }, extra) => {
     const db = getDb()
     const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
     if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
@@ -117,6 +113,8 @@ function createMcpServer(): McpServer {
     })
 
     db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
+    const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+    await syncAndPersist(db, updated, extra.requestInfo?.headers)
     return { content: [{ type: "text" as const, text: JSON.stringify({ job_id: jobId, status: "queued" }) }] }
   })
 
@@ -131,7 +129,7 @@ function createMcpServer(): McpServer {
 
   server.tool("twitter_cancel_publish", "Cancel a scheduled tweet", {
     post_id: z.string().describe("Post ID to cancel"),
-  }, async ({ post_id }) => {
+  }, async ({ post_id }, extra) => {
     const db = getDb()
     const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
     if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
@@ -139,6 +137,8 @@ function createMcpServer(): McpServer {
       return { content: [{ type: "text" as const, text: `Cannot cancel post in '${post.status}' state` }], isError: true }
     }
     db.prepare("UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
+    const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+    await syncAndPersist(db, updated, extra.requestInfo?.headers)
     return { content: [{ type: "text" as const, text: JSON.stringify({ cancelled: true }) }] }
   })
 
@@ -151,6 +151,13 @@ function createMcpServer(): McpServer {
     if (post.status === "queued" || post.status === "scheduled") return err(`Cannot delete post in '${post.status}' state. Cancel it first.`)
     if (post.status === "published") return err("Cannot delete a published post")
     db.prepare("DELETE FROM posts WHERE id = ?").run(post_id)
+    if (post.output_id) {
+      try {
+        await updateAppOutput(post.output_id, { status: "deleted" })
+      } catch (syncError) {
+        console.error(`[mcp] twitter output mark-deleted failed for post ${post_id}:`, syncError)
+      }
+    }
     return text({ deleted: true, post_id })
   })
 
