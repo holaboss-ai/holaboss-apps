@@ -2,7 +2,9 @@ import { createServerFn } from "@tanstack/react-start"
 import { randomUUID } from "node:crypto"
 
 import type { PostRecord } from "../lib/types"
+import { syncPostOutputAndPersist } from "./app-outputs"
 import { getDb } from "./db"
+import { updateAppOutput } from "./holaboss-bridge"
 import { enqueuePublish } from "./queue"
 
 export const fetchPosts = createServerFn({ method: "GET" }).handler(
@@ -38,7 +40,10 @@ export const createPost = createServerFn({ method: "POST" })
       "INSERT INTO posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
     ).run(id, data.title, data.content, data.subreddit, data.scheduled_at ?? null, now, now)
 
-    return db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+    const post = db
+      .prepare("SELECT * FROM posts WHERE id = ?")
+      .get(id) as PostRecord
+    return syncPostOutputAndPersist(db, post, null)
   })
 
 export const updatePost = createServerFn({ method: "POST" })
@@ -56,7 +61,10 @@ export const updatePost = createServerFn({ method: "POST" })
     db.prepare(
       "UPDATE posts SET title = ?, content = ?, subreddit = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
     ).run(data.title, data.content, data.subreddit, data.scheduled_at ?? null, data.post_id)
-    return db.prepare("SELECT * FROM posts WHERE id = ?").get(data.post_id) as PostRecord
+    const post = db
+      .prepare("SELECT * FROM posts WHERE id = ?")
+      .get(data.post_id) as PostRecord
+    return syncPostOutputAndPersist(db, post, null)
   })
 
 export const publishPost = createServerFn({ method: "POST" })
@@ -88,6 +96,11 @@ export const publishPost = createServerFn({ method: "POST" })
       "UPDATE posts SET status = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(newStatus, post.id)
 
+    const updated = db
+      .prepare("SELECT * FROM posts WHERE id = ?")
+      .get(post.id) as PostRecord
+    await syncPostOutputAndPersist(db, updated, null)
+
     return { job_id: jobId, status: newStatus }
   })
 
@@ -101,13 +114,29 @@ export const cancelSchedule = createServerFn({ method: "POST" })
     db.prepare(
       "UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?",
     ).run(data.post_id)
-    return db.prepare("SELECT * FROM posts WHERE id = ?").get(data.post_id) as PostRecord
+    const post = db
+      .prepare("SELECT * FROM posts WHERE id = ?")
+      .get(data.post_id) as PostRecord
+    return syncPostOutputAndPersist(db, post, null)
   })
 
 export const deletePost = createServerFn({ method: "POST" })
   .inputValidator((data: { post_id: string }) => data)
   .handler(async ({ data }) => {
     const db = getDb()
+    const post = db
+      .prepare("SELECT output_id FROM posts WHERE id = ?")
+      .get(data.post_id) as Pick<PostRecord, "output_id"> | undefined
     db.prepare("DELETE FROM posts WHERE id = ?").run(data.post_id)
+    if (post?.output_id) {
+      try {
+        await updateAppOutput(post.output_id, { status: "deleted" })
+      } catch (syncError) {
+        console.error(
+          `[actions] reddit output mark-deleted failed for post ${data.post_id}:`,
+          syncError,
+        )
+      }
+    }
     return { deleted: true }
   })
