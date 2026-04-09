@@ -92,7 +92,7 @@ download_prebuilt_sqlite() {
         "${sqlite_dir}/build/Release/better_sqlite3.node"
 
   local binary_platform
-  binary_platform=$(file "${sqlite_dir}/build/Release/better_sqlite3.node" | grep -o 'ELF\|Mach-O' | head -1)
+  binary_platform=$(file "${sqlite_dir}/build/Release/better_sqlite3.node" | grep -o 'ELF\|Mach-O\|PE32' | head -1)
   echo "  Replaced native binary (${binary_platform:-unknown})"
   rm -rf "$tmpdir"
 }
