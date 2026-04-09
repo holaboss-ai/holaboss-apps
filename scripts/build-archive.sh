@@ -142,7 +142,7 @@ build_module() {
 
   # Step 2: Build (vite + esbuild services bundle)
   echo "[2/4] Building..."
-  pnpm run build 2>&1 | tail -1
+  pnpm run build 2>&1
 
   # Step 3: Prepare runtime dependencies
   echo "[3/4] Preparing runtime dependencies..."
