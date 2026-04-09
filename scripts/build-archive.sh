@@ -147,12 +147,21 @@ build_module() {
   # Step 3: Prepare runtime dependencies
   echo "[3/4] Preparing runtime dependencies..."
 
+  # If Nitro didn't trace native deps (because the web server doesn't import db),
+  # bootstrap .output/server/node_modules from the root node_modules.
+  # start-services.cjs always needs better-sqlite3.
+  if [[ ! -d ".output/server/node_modules/better-sqlite3" ]]; then
+    mkdir -p .output/server/node_modules
+    # Resolve real path through pnpm symlinks
+    local sqlite_real
+    sqlite_real=$(node -e "console.log(require.resolve('better-sqlite3/package.json'))" | xargs dirname)
+    cp -RL "$sqlite_real" .output/server/node_modules/better-sqlite3
+  fi
+
   # Cross-compile: replace native binary if targeting different platform
   if [[ -n "$target_slug" ]]; then
     local sqlite_dir=".output/server/node_modules/better-sqlite3"
-    if [[ -d "$sqlite_dir" ]]; then
-      download_prebuilt_sqlite "$target_slug" "$sqlite_dir"
-    fi
+    download_prebuilt_sqlite "$target_slug" "$sqlite_dir"
   fi
 
   # Copy (not symlink) server/node_modules to .output/node_modules
