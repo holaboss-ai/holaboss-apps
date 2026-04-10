@@ -17,6 +17,16 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp/sse
+  tools:
+    - linkedin_create_post
+    - linkedin_update_post
+    - linkedin_list_posts
+    - linkedin_get_post
+    - linkedin_publish_post
+    - linkedin_get_publish_status
+    - linkedin_cancel_publish
+    - linkedin_delete_post
+    - linkedin_get_queue_stats
 
 integration:
   destination: "linkedin"

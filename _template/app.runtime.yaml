@@ -18,6 +18,7 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp
+  tools: []  # List MCP tool names exposed by src/server/mcp.ts (e.g. "create_post")
 
 integration:
   destination: "your-module"

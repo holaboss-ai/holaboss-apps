@@ -17,6 +17,16 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp/sse
+  tools:
+    - reddit_create_post
+    - reddit_update_post
+    - reddit_list_posts
+    - reddit_get_post
+    - reddit_publish_post
+    - reddit_get_publish_status
+    - reddit_cancel_publish
+    - reddit_delete_post
+    - reddit_get_queue_stats
 
 integration:
   destination: "reddit"
