@@ -17,49 +17,16 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp/sse
-
-tools:
-  - name: gmail_search
-    description: "Search Gmail threads by query (from:X, to:X, subject:X, or free text)"
-    parameters:
-      query: { type: string, required: true, description: "Gmail search query" }
-      max_results: { type: number, description: "Max results, default 10" }
-  - name: gmail_get_thread
-    description: "Read a full Gmail thread with all messages"
-    parameters:
-      thread_id: { type: string, required: true, description: "Gmail thread ID" }
-  - name: gmail_draft_reply
-    description: "Create an email draft (stored locally, NOT sent). Use gmail_send_draft to send."
-    parameters:
-      to_email: { type: string, required: true, description: "Recipient email" }
-      subject: { type: string, description: "Email subject" }
-      body: { type: string, required: true, description: "Email body text" }
-      thread_id: { type: string, description: "Gmail thread ID if this is a reply" }
-  - name: gmail_update_draft
-    description: "Update the content of a pending email draft"
-    parameters:
-      draft_id: { type: string, required: true, description: "Local draft ID" }
-      to_email: { type: string, description: "New recipient email" }
-      subject: { type: string, description: "New subject" }
-      body: { type: string, description: "New body text" }
-      thread_id: { type: string, description: "Gmail thread ID to link as reply" }
-  - name: gmail_send_draft
-    description: "Send a pending draft via Gmail API with automatic retries"
-    parameters:
-      draft_id: { type: string, required: true, description: "Local draft ID" }
-  - name: gmail_get_send_status
-    description: "Check the send status of a draft"
-    parameters:
-      draft_id: { type: string, required: true, description: "Local draft ID" }
-  - name: gmail_delete_draft
-    description: "Delete an email draft"
-    parameters:
-      draft_id: { type: string, required: true, description: "Local draft ID" }
-  - name: gmail_list_drafts
-    description: "List email drafts"
-    parameters:
-      status: { type: string, description: "Filter by status (pending/queued/sent/failed/discarded). Omit to list all." }
-      limit: { type: number, description: "Max results, default 20" }
+  tools:
+    - gmail_search
+    - gmail_get_thread
+    - gmail_open_thread
+    - gmail_draft_reply
+    - gmail_send_draft
+    - gmail_update_draft
+    - gmail_get_send_status
+    - gmail_delete_draft
+    - gmail_list_drafts
 
 integration:
   destination: "gmail"

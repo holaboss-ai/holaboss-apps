@@ -17,6 +17,16 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp/sse
+  tools:
+    - twitter_create_post
+    - twitter_update_post
+    - twitter_list_posts
+    - twitter_get_post
+    - twitter_publish_post
+    - twitter_get_publish_status
+    - twitter_cancel_publish
+    - twitter_delete_post
+    - twitter_get_queue_stats
 
 integration:
   destination: "twitter"

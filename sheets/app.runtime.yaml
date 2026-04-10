@@ -17,64 +17,17 @@ mcp:
   transport: http-sse
   port: 3099
   path: /mcp/sse
-
-tools:
-  - name: sheets_create_spreadsheet
-    description: "Create a new Google Sheets spreadsheet with headers and optional initial rows"
-    parameters:
-      title: { type: string, required: true, description: "Spreadsheet title" }
-      headers: { type: array, required: true, description: "Column header names" }
-      rows: { type: array, description: "Optional initial data rows" }
-  - name: sheets_list_spreadsheets
-    description: "List the user's Google Sheets spreadsheets, optionally search by name"
-    parameters:
-      query: { type: string, description: "Search term to filter by name" }
-  - name: sheets_get_info
-    description: "Get sheet title, headers, and row count"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-  - name: sheets_read_rows
-    description: "Read all rows as objects (header-keyed). Filter by column value with partial matching."
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      range: { type: string, description: "Sheet range, default Sheet1" }
-      filter_column: { type: string, description: "Column name to filter by" }
-      filter_value: { type: string, description: "Value to match (partial/contains)" }
-  - name: sheets_read_range
-    description: "Read raw cell values from a specific range"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      range: { type: string, required: true, description: "Range like Sheet1!A1:C10" }
-  - name: sheets_update_cell
-    description: "Update a single cell value"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      range: { type: string, required: true, description: "Cell range like Sheet1!D5" }
-      value: { type: string, required: true, description: "New value" }
-  - name: sheets_update_row
-    description: "Update an entire row by row number with column-value pairs"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      row_number: { type: number, required: true, description: "Row number (first data row is 2)" }
-      values: { type: object, required: true, description: "Column name → new value pairs" }
-      range: { type: string, description: "Sheet tab name, default Sheet1" }
-  - name: sheets_append_row
-    description: "Append a new row to the sheet"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      values: { type: array, required: true, description: "Array of cell values" }
-      range: { type: string, description: "Sheet range, default Sheet1" }
-  - name: sheets_delete_row
-    description: "Delete a row by row number"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      row_number: { type: number, required: true, description: "Row number to delete" }
-      range: { type: string, description: "Sheet tab name, default Sheet1" }
-  - name: sheets_add_sheet
-    description: "Add a new sheet tab to an existing spreadsheet"
-    parameters:
-      sheet_id: { type: string, required: true, description: "Google Sheet ID" }
-      title: { type: string, required: true, description: "Name for the new tab" }
+  tools:
+    - sheets_get_info
+    - sheets_create_spreadsheet
+    - sheets_list_spreadsheets
+    - sheets_read_rows
+    - sheets_read_range
+    - sheets_update_cell
+    - sheets_append_row
+    - sheets_update_row
+    - sheets_delete_row
+    - sheets_add_sheet
 
 integration:
   destination: "googlesheets"
