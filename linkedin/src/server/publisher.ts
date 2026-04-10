@@ -1,6 +1,6 @@
 import { createIntegrationClient } from "./holaboss-bridge"
 
-const LINKEDIN_API = "https://api.linkedin.com/rest"
+const LINKEDIN_API = "https://api.linkedin.com/v2"
 const linkedin = createIntegrationClient("linkedin")
 
 export interface PublishInput {
@@ -14,19 +14,40 @@ export interface PublishOutput {
 }
 
 export class LinkedInPublisher {
-  async publish(input: PublishInput): Promise<PublishOutput> {
+  private async resolveAuthorUrn(): Promise<string> {
     const result = await linkedin.proxy<{
-      data: { id?: string; value?: { "com.linkedin.ugc.ShareContent"?: { shareCommentary?: { text?: string } } } }
+      sub?: string
+    }>({
+      method: "GET",
+      endpoint: `${LINKEDIN_API}/userinfo`,
+    })
+    const sub = result.data?.sub
+    if (!sub) {
+      throw new Error(
+        `publish_failed:linkedin_profile:${result.status}:${JSON.stringify(result.data).slice(0, 500)}`,
+      )
+    }
+    return `urn:li:person:${sub}`
+  }
+
+  async publish(input: PublishInput): Promise<PublishOutput> {
+    const authorUrn = await this.resolveAuthorUrn()
+
+    const result = await linkedin.proxy<{
+      data: { id?: string }
     }>({
       method: "POST",
-      endpoint: `${LINKEDIN_API}/posts`,
+      endpoint: `${LINKEDIN_API}/ugcPosts`,
       body: {
-        commentary: input.content,
-        visibility: "PUBLIC",
-        distribution: {
-          feedDistribution: "MAIN_FEED",
-          targetEntities: [],
-          thirdPartyDistributionChannels: [],
+        author: authorUrn,
+        specificContent: {
+          "com.linkedin.ugc.ShareContent": {
+            shareCommentary: { text: input.content },
+            shareMediaCategory: "NONE",
+          },
+        },
+        visibility: {
+          "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
         },
         lifecycleState: "PUBLISHED",
       },
