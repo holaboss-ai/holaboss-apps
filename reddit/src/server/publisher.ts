@@ -1,5 +1,7 @@
-import { REDDIT_CONFIG } from "../lib/types"
-import { getProviderToken } from "./integration-client"
+import { createIntegrationClient } from "./holaboss-bridge"
+
+const REDDIT_API = "https://oauth.reddit.com"
+const reddit = createIntegrationClient("reddit")
 
 export interface PublishInput {
   holaboss_user_id: string
@@ -14,116 +16,42 @@ export interface PublishOutput {
 }
 
 export class RedditPublisher {
-  private readonly workspaceApiUrl: string
-  private readonly integrationId: string
-  private cachedToken: string | null = null
-
-  constructor() {
-    const raw = process.env.WORKSPACE_API_URL ?? "http://localhost:3033"
-    this.workspaceApiUrl = raw.replace(/\/+$/, "")
-    this.integrationId = process.env.WORKSPACE_REDDIT_INTEGRATION_ID ?? ""
-  }
-
-  private async resolveToken(): Promise<string> {
-    if (this.cachedToken) return this.cachedToken
-    this.cachedToken = await getProviderToken("reddit")
-    return this.cachedToken
-  }
-
   async publish(input: PublishInput): Promise<PublishOutput> {
-    if (!this.integrationId) {
-      throw new Error("publish_failed:missing_integration_id")
-    }
-
-    const draftRes = await fetch(
-      `${this.workspaceApiUrl}/api/posts/drafts?userId=${encodeURIComponent(input.holaboss_user_id)}`,
-      {
-        method: "POST",
-        headers: await this.headers(),
-        body: JSON.stringify({
-          provider: REDDIT_CONFIG.provider,
-          integrationId: this.integrationId,
-          title: input.title,
-          content: input.content,
-          subreddit: input.subreddit,
-          directSend: false,
-        }),
-      },
-    )
-
-    if (!draftRes.ok) {
-      const body = await draftRes.text()
-      throw new Error(`publish_failed:create_draft:${draftRes.status}:${body}`)
-    }
-
-    const draft = (await draftRes.json()) as { postId?: string; id?: string }
-    const draftId = draft.postId ?? draft.id
-    if (!draftId) throw new Error("publish_failed:missing_draft_id")
-
-    if (input.scheduled_at) {
-      const scheduleRes = await fetch(
-        `${this.workspaceApiUrl}/api/posts/drafts/${draftId}?userId=${encodeURIComponent(input.holaboss_user_id)}`,
-        {
-          method: "PUT",
-          headers: await this.headers(),
-          body: JSON.stringify({ scheduledDate: input.scheduled_at }),
-        },
-      )
-      if (!scheduleRes.ok) {
-        const body = await scheduleRes.text()
-        throw new Error(`publish_failed:schedule:${scheduleRes.status}:${body}`)
+    const result = await reddit.proxy<{
+      data: {
+        json?: { data?: { id?: string; name?: string; url?: string } }
+        id?: string
+        name?: string
       }
-      return { external_post_id: draftId }
-    }
-
-    const publishRes = await fetch(
-      `${this.workspaceApiUrl}/api/posts/drafts/${draftId}/publish`,
-      {
-        method: "PUT",
-        headers: await this.headers(),
-        body: JSON.stringify({ userId: input.holaboss_user_id }),
+    }>({
+      method: "POST",
+      endpoint: `${REDDIT_API}/api/submit`,
+      body: {
+        sr: input.subreddit,
+        kind: "self",
+        title: input.title,
+        text: input.content,
+        resubmit: true,
       },
-    )
-
-    if (!publishRes.ok) {
-      const body = await publishRes.text()
-      throw new Error(`publish_failed:publish:${publishRes.status}:${body}`)
-    }
-
-    const result = (await publishRes.json()) as Record<string, unknown>
-    const externalId =
-      (result.external_post_id as string) ??
-      (result.externalPostId as string) ??
-      (result.postId as string) ??
-      (result.id as string) ??
-      draftId
-
-    return { external_post_id: externalId }
-  }
-
-  async cancelScheduled(
-    draftId: string,
-    userId: string,
-    workspaceId?: string,
-  ): Promise<boolean> {
-    const url = new URL(
-      `${this.workspaceApiUrl}/api/posts/drafts/${draftId}`,
-    )
-    url.searchParams.set("userId", userId)
-    if (workspaceId) url.searchParams.set("workspaceId", workspaceId)
-
-    const res = await fetch(url.toString(), {
-      method: "DELETE",
-      headers: await this.headers(),
     })
-    return res.ok || res.status === 404
-  }
 
-  private async headers() {
-    const token = await this.resolveToken()
-    return {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    if (result.status >= 400) {
+      throw new Error(
+        `publish_failed:reddit_api:${result.status}:${JSON.stringify(result.data).slice(0, 500)}`,
+      )
     }
+
+    const postId =
+      result.data?.data?.json?.data?.name ??
+      result.data?.data?.json?.data?.id ??
+      result.data?.data?.name ??
+      result.data?.data?.id
+    if (!postId) {
+      throw new Error(
+        `publish_failed:missing_post_id:${JSON.stringify(result.data).slice(0, 500)}`,
+      )
+    }
+
+    return { external_post_id: postId }
   }
 }
