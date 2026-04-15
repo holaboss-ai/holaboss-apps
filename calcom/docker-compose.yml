@@ -1,0 +1,16 @@
+services:
+  calcom:
+    build: .
+    container_name: calcom-module
+    ports:
+      - "8080:8080"
+      - "3099:3099"
+    environment:
+      - DB_PATH=/app/data/calcom.db
+      - PORT=8080
+      - MCP_PORT=3099
+    volumes:
+      - calcom-data:/app/data
+
+volumes:
+  calcom-data:
