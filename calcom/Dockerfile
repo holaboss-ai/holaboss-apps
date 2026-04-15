@@ -6,7 +6,7 @@ RUN apk add --no-cache python3 make g++
 RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --maxsockets 1
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm run build
@@ -25,13 +25,12 @@ COPY --from=builder /app/src/server src/server
 COPY --from=builder /app/src/lib src/lib
 COPY --from=builder /app/tsconfig.json .
 
-RUN corepack enable && corepack prepare pnpm@10.12.1 --activate && \
-    apk add --no-cache python3 make g++ && \
-    pnpm add better-sqlite3 tsx && \
+RUN apk add --no-cache python3 make g++ && \
+    npm install better-sqlite3 && \
     apk del python3 make g++
 
 RUN mkdir -p /app/data
 
 EXPOSE 8080 3099
 
-CMD ["sh", "-c", "npx tsx src/server/start-services.ts & node .output/server/index.mjs"]
+CMD ["sh", "-c", "node .output/start-services.cjs & node .output/server/index.mjs"]

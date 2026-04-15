@@ -3,6 +3,7 @@ import type { BookingSummary } from "../lib/types"
 
 export function UpcomingBookings() {
   const [bookings, setBookings] = useState<BookingSummary[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -11,12 +12,18 @@ export function UpcomingBookings() {
       try {
         const r = await fetch("/api/upcoming-bookings")
         if (r.ok && !cancelled) {
-          const data = (await r.json()) as { bookings: BookingSummary[] }
+          const data = (await r.json()) as { bookings: BookingSummary[]; error?: string }
+          if (data.error) {
+            setError(data.error)
+          }
           setBookings(data.bookings)
           setLoading(false)
         }
       } catch {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setError("Unable to load bookings")
+          setLoading(false)
+        }
       }
     }
     load()
@@ -31,6 +38,15 @@ export function UpcomingBookings() {
     return (
       <div className="border-b border-border px-6 py-4 text-xs text-muted-foreground">
         Loading upcoming bookings…
+      </div>
+    )
+  }
+
+  if (error && bookings.length === 0) {
+    return (
+      <div className="border-b border-border px-6 py-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upcoming</div>
+        <div className="mt-2 text-xs text-destructive">{error}</div>
       </div>
     )
   }

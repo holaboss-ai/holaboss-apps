@@ -4,6 +4,7 @@ interface Status {
   connected: boolean
   event_types_count?: number
   error?: string
+  frontendUrl?: string
 }
 
 export function ConnectionStatusBar() {
@@ -20,7 +21,10 @@ export function ConnectionStatusBar() {
           setLoading(false)
         }
       } catch {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setStatus({ connected: false, error: "Unable to reach server" })
+          setLoading(false)
+        }
       }
     }
     poll()
@@ -34,7 +38,7 @@ export function ConnectionStatusBar() {
     }
   }, [])
 
-  const frontendUrl = typeof window !== "undefined" ? window.location.origin : ""
+  const connectUrl = status.frontendUrl || window.location.origin
 
   if (loading) {
     return (
@@ -48,7 +52,7 @@ export function ConnectionStatusBar() {
     return (
       <div className="flex items-center justify-between border-b border-destructive/40 bg-destructive/10 px-6 py-2 text-sm text-destructive">
         <span>Connection error: {status.error}</span>
-        <a href={frontendUrl} className="underline hover:text-destructive-foreground">Retry →</a>
+        <a href={connectUrl} className="underline hover:text-destructive-foreground">Retry →</a>
       </div>
     )
   }
@@ -59,7 +63,7 @@ export function ConnectionStatusBar() {
         <span className="text-amber-700 dark:text-amber-400">
           Not connected. Open Holaboss to connect Cal.com.
         </span>
-        <a href={frontendUrl} className="text-amber-700 dark:text-amber-400 underline hover:text-foreground">
+        <a href={connectUrl} className="text-amber-700 dark:text-amber-400 underline hover:text-foreground">
           Connect Cal.com →
         </a>
       </div>

@@ -6,7 +6,7 @@ export const Route = createFileRoute("/api/connection-status")({
     handlers: {
       GET: async () => {
         const status = await getConnectionStatus()
-        return Response.json(status)
+        return Response.json({ ...status, frontendUrl: process.env.HOLABOSS_FRONTEND_URL ?? "" })
       },
     },
   },

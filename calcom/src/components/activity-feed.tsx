@@ -102,11 +102,11 @@ export function ActivityFeed({ initial }: Props) {
                   >
                     {expanded[a.id] ? "▾" : "▸"} args
                   </button>
-                  {expanded[a.id] && (
-                    <pre className="mt-2 overflow-x-auto rounded-md bg-muted/50 p-2 font-mono text-xs">
-                      {JSON.stringify(JSON.parse(a.args_json), null, 2)}
-                    </pre>
-                  )}
+{expanded[a.id] && (
+                     <pre className="mt-2 overflow-x-auto rounded-md bg-muted/50 p-2 font-mono text-xs">
+                       {(() => { try { return JSON.stringify(JSON.parse(a.args_json), null, 2) } catch { return a.args_json } })()}
+                     </pre>
+                   )}
                 </div>
               </div>
               {a.calcom_deep_link && (
