@@ -1,0 +1,44 @@
+app_id: "attio-module"
+name: "Attio CRM"
+slug: "attio"
+
+lifecycle:
+  setup: "corepack enable && pnpm install && pnpm run build && pnpm prune --prod"
+  start: "DB_PATH=./data/attio.db nohup node .output/server/index.mjs > /tmp/attio-module.log 2>&1 & DB_PATH=./data/attio.db nohup node .output/start-services.cjs > /tmp/attio-module-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp
+  tools:
+    - "attio_describe_schema"
+    - "attio_get_connection_status"
+    - "attio_find_people"
+    - "attio_get_person"
+    - "attio_create_person"
+    - "attio_update_person"
+    - "attio_find_companies"
+    - "attio_create_company"
+    - "attio_link_person_to_company"
+    - "attio_add_note"
+    - "attio_create_task"
+    - "attio_list_tasks"
+    - "attio_list_records_in_list"
+    - "attio_add_to_list"
+
+integration:
+  destination: "attio"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_APP_GRANT"
+  - "HOLABOSS_INTEGRATION_BROKER_URL"
+  - "HOLABOSS_FRONTEND_URL"
