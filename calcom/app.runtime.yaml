@@ -1,0 +1,40 @@
+app_id: "calcom"
+name: "Cal.com"
+slug: "calcom"
+
+lifecycle:
+  setup: "rm -rf node_modules && corepack enable && pnpm install --maxsockets 1 && pnpm run build && pnpm prune --prod"
+  start: "DB_PATH=./data/calcom.db nohup node .output/server/index.mjs > /tmp/calcom.log 2>&1 & DB_PATH=./data/calcom.db nohup node .output/start-services.cjs > /tmp/calcom-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp
+  tools:
+    - calcom_get_connection_status
+    - calcom_list_event_types
+    - calcom_get_event_type
+    - calcom_list_bookings
+    - calcom_get_booking
+    - calcom_cancel_booking
+    - calcom_reschedule_booking
+    - calcom_list_available_slots
+
+integration:
+  destination: "calcom"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_APP_GRANT"
+  - "HOLABOSS_INTEGRATION_BROKER_URL"
+  - "HOLABOSS_WORKSPACE_ID"
+  - "HOLABOSS_USER_ID"
+  - "HOLABOSS_FRONTEND_URL"
