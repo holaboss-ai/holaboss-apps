@@ -6,7 +6,8 @@ export const Route = createFileRoute("/api/recent-actions")({
     handlers: {
       GET: async ({ request }) => {
         const url = new URL(request.url)
-        const since = url.searchParams.get("since") ?? undefined
+        const sinceStr = url.searchParams.get("since")
+        const since = sinceStr ? Number(sinceStr) : undefined
         const limit = Number(url.searchParams.get("limit") ?? 100)
         const actions = listRecentActions({ since, limit })
         return Response.json({ actions })

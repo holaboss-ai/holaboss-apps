@@ -30,6 +30,9 @@ export function startMcpServer(port: number) {
       transports.set(transport.sessionId, transport)
       const server = createMcpServer()
       await server.connect(transport)
+      res.on("close", () => {
+        transports.delete(transport.sessionId)
+      })
       return
     }
 
@@ -41,7 +44,14 @@ export function startMcpServer(port: number) {
         res.end("Unknown session")
         return
       }
-      await transport.handlePostMessage(req, res)
+      try {
+        await transport.handlePostMessage(req, res)
+      } catch {
+        if (!res.headersSent) {
+          res.writeHead(500)
+          res.end("Internal error")
+        }
+      }
       return
     }
 

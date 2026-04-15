@@ -79,7 +79,7 @@ export async function getConnectionStatusImpl(
   if (r.error.code === "not_connected") {
     return { ok: true, data: { connected: false, result_summary: "Not connected" } }
   }
-  return r as unknown as Result<{ connected: boolean } & ToolSuccessMeta, CalcomError>
+  return { ok: false, error: r.error }
 }
 
 // -------------------- Event Types --------------------
@@ -266,7 +266,12 @@ export function registerTools(server: McpServer): void {
   const rescheduleBooking = wrapTool("calcom_reschedule_booking", rescheduleBookingImpl)
   const listAvailableSlots = wrapTool("calcom_list_available_slots", listAvailableSlotsImpl)
 
-  const asText = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }] })
+  const asText = (result: Result<unknown, CalcomError>) => {
+    if (result.ok) {
+      return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
+    }
+    return { content: [{ type: "text" as const, text: JSON.stringify({ error: result.error }) }], isError: true as const }
+  }
 
   server.tool(
     "calcom_get_connection_status",

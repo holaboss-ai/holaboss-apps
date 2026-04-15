@@ -56,12 +56,12 @@ function recordAction<A, T>(
   `).run(row)
 }
 
-export function listRecentActions(params: { since?: string; limit?: number }): AgentActionRecord[] {
+export function listRecentActions(params: { since?: number; limit?: number }): AgentActionRecord[] {
   const db = getDb()
   const limit = params.limit ?? 100
   if (params.since) {
     return db
-      .prepare(`SELECT * FROM agent_actions WHERE id > @since ORDER BY timestamp DESC LIMIT @limit`)
+      .prepare(`SELECT * FROM agent_actions WHERE timestamp > @since ORDER BY timestamp DESC LIMIT @limit`)
       .all({ since: params.since, limit }) as AgentActionRecord[]
   }
   return db
