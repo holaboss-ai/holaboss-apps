@@ -128,25 +128,42 @@ pnpm --filter &lt;module&gt; run test:live</pre>`
         return
       }
 
-      try {
-        const result = await proxyProviderRequest({
-          apiKey: API_KEY,
-          connectedAccountId,
-          method,
-          endpoint,
-          body: request.body,
-        })
+      // Retry once on network-layer fetch failures (transient DNS / TLS / TCP).
+      // Composio data-plane errors (4xx / 5xx) come back as result.status, not
+      // a thrown exception, so they're NOT retried here.
+      const proxyArgs = {
+        apiKey: API_KEY,
+        connectedAccountId,
+        method,
+        endpoint,
+        body: request.body,
+      }
+      let result: Awaited<ReturnType<typeof proxyProviderRequest>> | undefined
+      let lastErr: unknown = null
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          result = await proxyProviderRequest(proxyArgs)
+          break
+        } catch (e) {
+          lastErr = e
+          const msg = e instanceof Error ? e.message : String(e)
+          const transient = /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(msg)
+          if (attempt === 1 && transient) {
+            logLine(`PROXY ${provider} ${method} ${endpoint} → transient ${msg} (retrying once after 250ms)`)
+            await new Promise((r) => setTimeout(r, 250))
+            continue
+          }
+          break
+        }
+      }
+      if (result) {
         logLine(`PROXY ${provider} ${method} ${endpoint} → ${result.status}`)
         send(res, 200, result)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
+      } else {
+        const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
         logLine(`PROXY ${provider} ${method} ${endpoint} → ERROR ${msg}`)
-        // Surface as a 502 inside the proxy envelope so the SDK can map to upstream_error.
-        send(res, 200, {
-          data: { error: msg },
-          status: 502,
-          headers: {},
-        })
+        // Surface as 502 inside the proxy envelope so the SDK can map to upstream_error.
+        send(res, 200, { data: { error: msg }, status: 502, headers: {} })
       }
       return
     }
