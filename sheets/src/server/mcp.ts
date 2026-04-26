@@ -4,9 +4,21 @@ import { createServer } from "node:http"
 import { z } from "zod"
 
 import { MODULE_CONFIG } from "../lib/types"
-import { getSheetInfo, readRows, readRange, updateCell, updateRow, appendRow, createSpreadsheet, listSpreadsheets, deleteRow, addSheet } from "./google-api"
+import {
+  addSheet,
+  appendRow,
+  createSpreadsheet,
+  deleteRow,
+  getSheetInfo,
+  listSpreadsheets,
+  readRange,
+  readRows,
+  updateCell,
+  updateRow,
+} from "./google-api"
 import { contactRef, publishContactRowOutput } from "./app-outputs"
 
+// Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
 }
@@ -35,225 +47,460 @@ function createMcpServer(): McpServer {
     version: "1.0.0",
   })
 
-  server.tool("sheets_get_info", "Get sheet title, headers, and row count", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-  }, async ({ sheet_id }) => {
-    try {
-      const info = await getSheetInfo(sheet_id)
-      return text(info)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "sheets_get_info",
+    {
+      title: "Get sheet info",
+      description: `Get the title, header row, and row count of a spreadsheet (Sheet1 by default).
 
-  server.tool("sheets_create_spreadsheet", "Create a new Google Sheets spreadsheet with headers and optional initial rows", {
-    title: z.string().describe("Spreadsheet title"),
-    headers: z.array(z.string()).describe("Column header names (e.g. [\"name\", \"email\", \"company\"])"),
-    rows: z.array(z.array(z.string())).optional().describe("Optional initial data rows"),
-  }, async ({ title, headers, rows }) => {
-    try {
-      const spreadsheetId = await createSpreadsheet(title, headers, rows ?? [])
-      return text({ created: true, spreadsheet_id: spreadsheetId, title, headers })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("sheets_list_spreadsheets", "List the user's Google Sheets spreadsheets. Optionally search by name.", {
-    query: z.string().optional().describe("Search term to filter by spreadsheet name"),
-  }, async ({ query }) => {
-    try {
-      const sheets = await listSpreadsheets(query)
-      return text(sheets)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("sheets_read_rows", "Read all rows as objects (header-keyed). Optionally filter by column value (supports partial/contains matching).", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    range: z.string().optional().describe("Sheet range (default: Sheet1)"),
-    filter_column: z.string().optional().describe("Column name to filter by"),
-    filter_value: z.string().optional().describe("Value to match in filter_column (partial match supported)"),
-  }, async ({ sheet_id, range, filter_column, filter_value }) => {
-    try {
-      let rows = await readRows(sheet_id, range ?? "Sheet1")
-      if (filter_column && filter_value) {
-        const col = filter_column.trim().toLowerCase()
-        const val = filter_value.trim().toLowerCase()
-        rows = rows.filter(r => r.values[col]?.toLowerCase().includes(val))
-      }
-      return text(rows)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("sheets_read_range", "Read raw cell values from a specific range", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    range: z.string().describe("Range in A1 notation (e.g. Sheet1!A1:C10)"),
-  }, async ({ sheet_id, range }) => {
-    try {
-      const data = await readRange(sheet_id, range)
-      return text(data)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("sheets_update_cell", "Update a single cell value", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    range: z.string().describe("Cell in A1 notation (e.g. Sheet1!D5)"),
-    value: z.string().describe("New cell value"),
-    contact_name: z.string().optional().describe("Contact name if this is a CRM contact row update"),
-    contact_email: z.string().optional().describe("Contact email if this is a CRM contact row update"),
-  }, async ({ sheet_id, range, value, contact_name, contact_email }) => {
-    try {
-      await updateCell(sheet_id, range, value)
-      const result: Record<string, unknown> = { updated: true, range, value }
-
-      if (contact_name && contact_email) {
-        const match = range.match(/^(.+?)!([A-Z]+)(\d+)$/)
-        if (match) {
-          const sheetName = match[1]
-          const rowNumber = parseInt(match[3], 10)
-          const ref = contactRef(sheet_id, sheetName, rowNumber)
-          try {
-            const outputId = await publishContactRowOutput({
-              ref,
-              name: contact_name,
-              email: contact_email,
-              spreadsheetId: sheet_id,
-              sheetName,
-              rowNumber,
-              action: "Updated CRM contact",
-            })
-            if (outputId) result.output_id = outputId
-          } catch {
-            // non-fatal: output publishing should not block the tool
-          }
-        }
-      }
-
-      return text(result)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("sheets_append_row", "Append a new row to a sheet", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    values: z.array(z.string()).describe("Array of cell values for the new row"),
-    range: z.string().optional().describe("Sheet range (default: Sheet1)"),
-  }, async ({ sheet_id, values, range }) => {
-    try {
-      const sheetName = range ?? "Sheet1"
-      await appendRow(sheet_id, sheetName, values)
-      const result: Record<string, unknown> = { appended: true, values }
-
-      // Try to publish a contact output if this looks like a contacts sheet
+When to use: before reading or writing data, learn the column names so you can address rows by header.
+Returns: { title, headers: string[], rowCount }.`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id, the long string in the sheet URL after '/d/'."),
+      },
+      annotations: {
+        title: "Get sheet info",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id }) => {
       try {
         const info = await getSheetInfo(sheet_id)
-        const headers = (info.headers ?? []).map((h: string) => h.trim().toLowerCase())
-        const emailIdx = findEmailColumnIndex(headers)
-        const nameIdx = findNameColumnIndex(headers)
+        return text(info)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
 
-        if (emailIdx >= 0 && emailIdx < values.length) {
-          const email = values[emailIdx]
-          const name = nameIdx >= 0 && nameIdx < values.length ? values[nameIdx] : ""
-          const rows = await readRows(sheet_id, sheetName)
-          const lastRow = rows[rows.length - 1]
-          if (lastRow) {
-            const ref = contactRef(sheet_id, sheetName, lastRow.rowNumber)
-            const outputId = await publishContactRowOutput({
-              ref,
-              name: name || email,
-              email,
-              spreadsheetId: sheet_id,
-              sheetName,
-              rowNumber: lastRow.rowNumber,
-              action: "Added CRM contact",
-            })
-            if (outputId) result.output_id = outputId
+  server.registerTool(
+    "sheets_create_spreadsheet",
+    {
+      title: "Create spreadsheet",
+      description: `Create a brand-new Google Sheet with header row and optional initial data.
+
+When to use: bootstrapping a new tracker (CRM contact list, content calendar, pipeline, etc.).
+Returns: { created: true, spreadsheet_id, title, headers }. Use spreadsheet_id with other sheets_* tools.`,
+      inputSchema: {
+        title: z.string().describe("Spreadsheet title shown in Google Drive."),
+        headers: z
+          .array(z.string())
+          .describe("Column header row, e.g. ['name', 'email', 'company', 'stage']."),
+        rows: z
+          .array(z.array(z.string()))
+          .optional()
+          .describe("Optional initial data rows, e.g. [['Alice', 'a@b.com', 'Acme', 'lead']]."),
+      },
+      annotations: {
+        title: "Create spreadsheet",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ title, headers, rows }) => {
+      try {
+        const spreadsheetId = await createSpreadsheet(title, headers, rows ?? [])
+        return text({ created: true, spreadsheet_id: spreadsheetId, title, headers })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "sheets_list_spreadsheets",
+    {
+      title: "List spreadsheets",
+      description: `List the user's Google Sheets, optionally filtered by name.
+
+When to use: the user references a sheet by name and you need its id; or a discovery question like "what sheets do I have?".
+Returns: array of { id, name, modified_at }.`,
+      inputSchema: {
+        query: z
+          .string()
+          .optional()
+          .describe("Substring to filter spreadsheet names (case-insensitive contains). Omit to list all."),
+      },
+      annotations: {
+        title: "List spreadsheets",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ query }) => {
+      try {
+        const sheets = await listSpreadsheets(query)
+        return text(sheets)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "sheets_read_rows",
+    {
+      title: "Read rows as objects",
+      description: `Read all data rows as objects keyed by header name. Supports server-side filtering by a column value (case-insensitive contains).
+
+When to use: scan or search a sheet's contents.
+Prerequisites: call sheets_get_info first if you don't already know the headers.
+Returns: array of { rowNumber, values: { <header>: string } }. rowNumber is 1-indexed; data rows start at 2 (row 1 is the header).`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        range: z
+          .string()
+          .optional()
+          .describe("Sheet tab name, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
+        filter_column: z
+          .string()
+          .optional()
+          .describe("Column header to filter by, e.g. 'email'. Case-insensitive."),
+        filter_value: z
+          .string()
+          .optional()
+          .describe("Value to match in filter_column (partial / contains). Both filter_column AND filter_value must be supplied to filter."),
+      },
+      annotations: {
+        title: "Read rows as objects",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, range, filter_column, filter_value }) => {
+      try {
+        let rows = await readRows(sheet_id, range ?? "Sheet1")
+        if (filter_column && filter_value) {
+          const col = filter_column.trim().toLowerCase()
+          const val = filter_value.trim().toLowerCase()
+          rows = rows.filter(r => r.values[col]?.toLowerCase().includes(val))
+        }
+        return text(rows)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "sheets_read_range",
+    {
+      title: "Read raw range",
+      description: `Read raw cell values from an A1-notation range. Returns a 2D string array — no header keying.
+
+When to use: reading a non-rectangular slice, a range that spans tabs, or when you don't want header inference.
+Returns: 2D array of strings, e.g. [['Alice', 'a@b.com'], ['Bob', 'b@c.com']].`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        range: z
+          .string()
+          .describe("A1 notation range, e.g. 'Sheet1!A1:C10' or 'Contacts!B2:B'."),
+      },
+      annotations: {
+        title: "Read raw range",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, range }) => {
+      try {
+        const data = await readRange(sheet_id, range)
+        return text(data)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "sheets_update_cell",
+    {
+      title: "Update cell",
+      description: `Write a single cell value.
+
+When to use: targeted edit — "set D5 to 'closed'".
+Side effects: if BOTH contact_name and contact_email are passed AND the range is a single-cell A1 ref like 'Sheet1!D5', a CRM contact output is published in the Holaboss workspace, linked to that row.
+Returns: { updated: true, range, value, output_id? }.`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        range: z.string().describe("Single-cell A1 notation, e.g. 'Sheet1!D5'."),
+        value: z.string().describe("New cell value as a string. Use '' to clear."),
+        contact_name: z
+          .string()
+          .optional()
+          .describe("Contact name — pass with contact_email to publish a CRM output for the row containing this cell."),
+        contact_email: z
+          .string()
+          .optional()
+          .describe("Contact email — pass with contact_name to publish a CRM output for the row containing this cell."),
+      },
+      annotations: {
+        title: "Update cell",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, range, value, contact_name, contact_email }) => {
+      try {
+        await updateCell(sheet_id, range, value)
+        const result: Record<string, unknown> = { updated: true, range, value }
+
+        if (contact_name && contact_email) {
+          const match = range.match(/^(.+?)!([A-Z]+)(\d+)$/)
+          if (match) {
+            const sheetName = match[1]
+            const rowNumber = parseInt(match[3], 10)
+            const ref = contactRef(sheet_id, sheetName, rowNumber)
+            try {
+              const outputId = await publishContactRowOutput({
+                ref,
+                name: contact_name,
+                email: contact_email,
+                spreadsheetId: sheet_id,
+                sheetName,
+                rowNumber,
+                action: "Updated CRM contact",
+              })
+              if (outputId) result.output_id = outputId
+            } catch {
+              // non-fatal: output publishing should not block the tool
+            }
           }
         }
-      } catch {
-        // non-fatal
+
+        return text(result)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
       }
+    },
+  )
 
-      return text(result)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "sheets_append_row",
+    {
+      title: "Append row",
+      description: `Append a row to the end of a sheet tab.
 
-  server.tool("sheets_update_row", "Update an entire row by row number. Provide column-value pairs to update.", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    row_number: z.number().describe("Row number to update (first data row is 2)"),
-    values: z.record(z.string()).describe("Object of column_name → new_value pairs to update"),
-    range: z.string().optional().describe("Sheet range (default: Sheet1)"),
-    contact_name: z.string().optional().describe("Contact name if this is a CRM contact row update"),
-    contact_email: z.string().optional().describe("Contact email if this is a CRM contact row update"),
-  }, async ({ sheet_id, row_number, values, range, contact_name, contact_email }) => {
-    try {
-      const sheetName = range ?? "Sheet1"
-      const info = await getSheetInfo(sheet_id)
-      const headers = info.headers ?? []
-      await updateRow(sheet_id, row_number, headers.length, values, headers)
-      const result: Record<string, unknown> = { updated: true, row_number, values }
+Side effects: if the sheet has an 'email'/'mail'/'e-mail' column AND the appended row contains an email, a CRM contact output is auto-published linking the new row to a Holaboss contact.
+Returns: { appended: true, values, output_id? }.`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        values: z
+          .array(z.string())
+          .describe("Cell values for the new row in column order, e.g. ['Alice', 'a@b.com', 'Acme']."),
+        range: z
+          .string()
+          .optional()
+          .describe("Sheet tab name to append to, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
+      },
+      annotations: {
+        title: "Append row",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, values, range }) => {
+      try {
+        const sheetName = range ?? "Sheet1"
+        await appendRow(sheet_id, sheetName, values)
+        const result: Record<string, unknown> = { appended: true, values }
 
-      if (contact_name || contact_email) {
-        const name = contact_name ?? ""
-        const email = contact_email ?? ""
-        if (name || email) {
-          const ref = contactRef(sheet_id, sheetName, row_number)
-          try {
-            const outputId = await publishContactRowOutput({
-              ref,
-              name: name || email,
-              email,
-              spreadsheetId: sheet_id,
-              sheetName,
-              rowNumber: row_number,
-              action: "Updated CRM contact",
-            })
-            if (outputId) result.output_id = outputId
-          } catch {
-            // non-fatal
+        // Try to publish a contact output if this looks like a contacts sheet
+        try {
+          const info = await getSheetInfo(sheet_id)
+          const headers = (info.headers ?? []).map((h: string) => h.trim().toLowerCase())
+          const emailIdx = findEmailColumnIndex(headers)
+          const nameIdx = findNameColumnIndex(headers)
+
+          if (emailIdx >= 0 && emailIdx < values.length) {
+            const email = values[emailIdx]
+            const name = nameIdx >= 0 && nameIdx < values.length ? values[nameIdx] : ""
+            const rows = await readRows(sheet_id, sheetName)
+            const lastRow = rows[rows.length - 1]
+            if (lastRow) {
+              const ref = contactRef(sheet_id, sheetName, lastRow.rowNumber)
+              const outputId = await publishContactRowOutput({
+                ref,
+                name: name || email,
+                email,
+                spreadsheetId: sheet_id,
+                sheetName,
+                rowNumber: lastRow.rowNumber,
+                action: "Added CRM contact",
+              })
+              if (outputId) result.output_id = outputId
+            }
+          }
+        } catch {
+          // non-fatal
+        }
+
+        return text(result)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "sheets_update_row",
+    {
+      title: "Update row",
+      description: `Replace columns in an existing row by row number, supplying { column_name: value } pairs.
+
+Prerequisites: row_number from sheets_read_rows (each row in the result has a rowNumber field). First data row is 2 (row 1 is the header).
+Side effects: if contact_name OR contact_email is passed, a CRM contact output is published linking to this row.
+Returns: { updated: true, row_number, values, output_id? }.`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        row_number: z
+          .number()
+          .int()
+          .min(2)
+          .describe("Row number to update. First data row is 2 (row 1 is the header)."),
+        values: z
+          .record(z.string())
+          .describe("Map of column header → new value, e.g. { stage: 'closed', notes: 'paid invoice' }."),
+        range: z
+          .string()
+          .optional()
+          .describe("Sheet tab name, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
+        contact_name: z
+          .string()
+          .optional()
+          .describe("Contact name — pass with contact_email to publish a CRM output for this row."),
+        contact_email: z
+          .string()
+          .optional()
+          .describe("Contact email — pass with contact_name to publish a CRM output for this row."),
+      },
+      annotations: {
+        title: "Update row",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, row_number, values, range, contact_name, contact_email }) => {
+      try {
+        const sheetName = range ?? "Sheet1"
+        const info = await getSheetInfo(sheet_id)
+        const headers = info.headers ?? []
+        await updateRow(sheet_id, row_number, headers.length, values, headers)
+        const result: Record<string, unknown> = { updated: true, row_number, values }
+
+        if (contact_name || contact_email) {
+          const name = contact_name ?? ""
+          const email = contact_email ?? ""
+          if (name || email) {
+            const ref = contactRef(sheet_id, sheetName, row_number)
+            try {
+              const outputId = await publishContactRowOutput({
+                ref,
+                name: name || email,
+                email,
+                spreadsheetId: sheet_id,
+                sheetName,
+                rowNumber: row_number,
+                action: "Updated CRM contact",
+              })
+              if (outputId) result.output_id = outputId
+            } catch {
+              // non-fatal
+            }
           }
         }
+
+        return text(result)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
       }
+    },
+  )
 
-      return text(result)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "sheets_delete_row",
+    {
+      title: "Delete row",
+      description: `Delete a row by row number. All subsequent rows shift up by 1, so any cached row numbers become stale — re-read with sheets_read_rows after deleting.
 
-  server.tool("sheets_delete_row", "Delete a row by row number", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    row_number: z.number().describe("Row number to delete (first data row is 2)"),
-    range: z.string().optional().describe("Sheet tab name (default: Sheet1)"),
-  }, async ({ sheet_id, row_number, range }) => {
-    try {
-      await deleteRow(sheet_id, range ?? "Sheet1", row_number)
-      return text({ deleted: true, row_number })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+Prerequisites: row_number from sheets_read_rows. First data row is 2.
+Returns: { deleted: true, row_number }.`,
+      inputSchema: {
+        sheet_id: z.string().describe("Google Sheets spreadsheet id."),
+        row_number: z
+          .number()
+          .int()
+          .min(2)
+          .describe("Row number to delete. First data row is 2 (row 1 is the header)."),
+        range: z
+          .string()
+          .optional()
+          .describe("Sheet tab name, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
+      },
+      annotations: {
+        title: "Delete row",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, row_number, range }) => {
+      try {
+        await deleteRow(sheet_id, range ?? "Sheet1", row_number)
+        return text({ deleted: true, row_number })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
 
-  server.tool("sheets_add_sheet", "Add a new sheet tab to an existing spreadsheet", {
-    sheet_id: z.string().describe("Google Sheets spreadsheet ID"),
-    title: z.string().describe("Name for the new sheet tab"),
-  }, async ({ sheet_id, title }) => {
-    try {
-      const result = await addSheet(sheet_id, title)
-      return text({ added: true, ...result })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "sheets_add_sheet",
+    {
+      title: "Add sheet tab",
+      description: `Add a new sheet (tab) to an existing spreadsheet.
+
+When to use: organize data into multiple tabs within one spreadsheet — e.g. 'Contacts' and 'Companies' tabs in the same file.
+Returns: { added: true, sheet_id, title, ... } where sheet_id is the new tab's internal id (not the spreadsheet id).`,
+      inputSchema: {
+        sheet_id: z.string().describe("Spreadsheet id (the file). NOT the tab id."),
+        title: z.string().describe("Name for the new tab, e.g. 'Companies' or 'Q2 Pipeline'."),
+      },
+      annotations: {
+        title: "Add sheet tab",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ sheet_id, title }) => {
+      try {
+        const result = await addSheet(sheet_id, title)
+        return text({ added: true, ...result })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
 
   return server
 }

@@ -12,6 +12,7 @@ import { listThreads, getThread, parseMessage } from "./google-api"
 import { enqueueSend } from "./queue"
 import { resolveHolabossTurnContext } from "./holaboss-bridge"
 
+// Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
 function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
 
@@ -40,224 +41,426 @@ function createMcpServer(): McpServer {
     version: "1.0.0",
   })
 
-  server.tool("gmail_search", "Search Gmail threads by query string (from:X, to:X, subject:X, or free text)", {
-    query: z.string().describe("Gmail search query (e.g. 'from:alice subject:meeting')"),
-    max_results: z.number().optional().describe("Max results, default 10"),
-  }, async ({ query, max_results }) => {
-    try {
-      const threads = await listThreads(query, max_results ?? 10)
-      return text(threads)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "gmail_search",
+    {
+      title: "Search Gmail threads",
+      description: `Search the user's Gmail using Gmail's standard query operators.
 
-  server.tool("gmail_get_thread", "Read a full Gmail thread with all messages", {
-    thread_id: z.string().describe("Gmail thread ID"),
-  }, async ({ thread_id }) => {
-    try {
-      const thread = await getThread(thread_id)
-      const messages = thread.messages.map(parseMessage)
-      return text({ id: thread.id, messages })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("gmail_open_thread", "Open a Gmail thread as a durable workspace output for CRM follow-up.", {
-    thread_id: z.string().describe("Gmail thread ID"),
-    contact_email: z.string().optional().describe("Primary CRM contact email for the thread"),
-    contact_row_ref: z.string().optional().describe("Optional Sheets contact row reference for CRM linking"),
-  }, async ({ thread_id, contact_email, contact_row_ref }) => {
-    try {
-      const thread = await getThread(thread_id)
-      const messages = thread.messages.map(parseMessage)
-      const primaryEmail = firstNonEmpty([
-        contact_email,
-        ...messages.flatMap((message) => [
-          extractEmailAddress(message.to),
-          extractEmailAddress(message.from),
-        ]),
-      ])
-      const subject = firstNonEmpty(messages.map((message) => message.subject))
-      const outputId = await syncThreadOutput({
-        threadId: thread.id,
-        subject,
-        primaryEmail: primaryEmail || null,
-        contactRowRef: contact_row_ref ?? null,
-      })
-
-      return text({
-        id: thread.id,
-        subject,
-        primary_email: primaryEmail || null,
-        output_id: outputId,
-        messages,
-      })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("gmail_draft_reply", "Create an email draft (stored locally, NOT sent). Use gmail_send_draft to send.", {
-    to_email: z.string().describe("Recipient email address"),
-    subject: z.string().optional().describe("Email subject"),
-    body: z.string().describe("Email body text"),
-    thread_id: z.string().optional().describe("Gmail thread ID if this is a reply"),
-    contact_row_ref: z.string().optional().describe("Optional Sheets contact row reference for CRM linking"),
-  }, async ({ to_email, subject, body, thread_id, contact_row_ref }, extra) => {
-    try {
-      const db = getDb()
-      const id = randomUUID()
-      db.prepare(
-        "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
-      ).run(id, to_email, thread_id ?? null, subject ?? null, body)
-      let draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
-      const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
+When to use: find threads matching a question like "messages from alice last week" → query='from:alice newer_than:7d'.
+When NOT to use: to read a thread's full body — search returns only snippets; call gmail_get_thread next.
+Operators: from:, to:, subject:, after:YYYY/MM/DD, before:, has:attachment, label:, is:unread, plus free text. Combine with spaces (AND) or 'OR'.
+Returns: array of thread snippets — { id, snippet, lastMessageDate, ... }.`,
+      inputSchema: {
+        query: z
+          .string()
+          .describe(
+            "Gmail search query, e.g. 'from:alice subject:meeting newer_than:7d'. See https://support.google.com/mail/answer/7190.",
+          ),
+        max_results: z.number().int().positive().max(100).optional().describe("Max results, default 10, max 100."),
+      },
+      annotations: {
+        title: "Search Gmail threads",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ query, max_results }) => {
       try {
-        const outputId = await syncDraftOutput(
-          draft,
-          { contactRowRef: contact_row_ref ?? null },
-          context,
-        )
-        if (outputId && outputId !== draft.output_id) {
-          persistDraftOutputId(db, draft.id, outputId)
-          draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+        const threads = await listThreads(query, max_results ?? 10)
+        return text(threads)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "gmail_get_thread",
+    {
+      title: "Get Gmail thread",
+      description: `Read a full Gmail thread including every message body.
+
+Prerequisites: thread_id from gmail_search or gmail_open_thread.
+When to use: the user wants to read or summarize an entire thread; you need full message bodies to compose a reply.
+Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }] } in chronological order.`,
+      inputSchema: {
+        thread_id: z.string().describe("Gmail thread id from gmail_search results."),
+      },
+      annotations: {
+        title: "Get Gmail thread",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ thread_id }) => {
+      try {
+        const thread = await getThread(thread_id)
+        const messages = thread.messages.map(parseMessage)
+        return text({ id: thread.id, messages })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "gmail_open_thread",
+    {
+      title: "Open thread as workspace output",
+      description: `Pin a Gmail thread as a durable workspace output so the CRM and other tools can reference it. Idempotent — opening the same thread twice updates the existing output.
+
+When to use: before adding a thread to a CRM follow-up workflow, or when the user asks to 'save', 'pin', or 'track' an email thread.
+Prerequisites: thread_id from gmail_search.
+Side effects: publishes (or updates) an app output that other modules can link to. Pass contact_row_ref to wire it to a Sheets CRM contact.
+Returns: { id, subject, primary_email, output_id, messages }.`,
+      inputSchema: {
+        thread_id: z.string().describe("Gmail thread id from gmail_search."),
+        contact_email: z
+          .string()
+          .optional()
+          .describe("Override the primary CRM contact email; otherwise inferred from the thread participants."),
+        contact_row_ref: z
+          .string()
+          .optional()
+          .describe(
+            "Sheets contact row reference for CRM linking — typically the value returned by sheets tools when working with a contacts sheet.",
+          ),
+      },
+      annotations: {
+        title: "Open thread as workspace output",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ thread_id, contact_email, contact_row_ref }) => {
+      try {
+        const thread = await getThread(thread_id)
+        const messages = thread.messages.map(parseMessage)
+        const primaryEmail = firstNonEmpty([
+          contact_email,
+          ...messages.flatMap((message) => [
+            extractEmailAddress(message.to),
+            extractEmailAddress(message.from),
+          ]),
+        ])
+        const subject = firstNonEmpty(messages.map((message) => message.subject))
+        const outputId = await syncThreadOutput({
+          threadId: thread.id,
+          subject,
+          primaryEmail: primaryEmail || null,
+          contactRowRef: contact_row_ref ?? null,
+        })
+
+        return text({
+          id: thread.id,
+          subject,
+          primary_email: primaryEmail || null,
+          output_id: outputId,
+          messages,
+        })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "gmail_draft_reply",
+    {
+      title: "Create email draft",
+      description: `Create an email draft locally. Stored in the module's SQLite — NOT sent. Call gmail_send_draft to actually send.
+
+When to use: the user dictates a reply or new email to compose, OR you want to stage an outgoing email for review.
+When NOT to use: to update an existing draft (use gmail_update_draft). To send immediately (call gmail_send_draft after this).
+Prerequisites: for replies, thread_id from gmail_search or gmail_get_thread (so Gmail threads correctly).
+Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, status: 'pending', output_id?, ... }.`,
+      inputSchema: {
+        to_email: z.string().describe("Recipient email address, e.g. 'alice@example.com'."),
+        subject: z.string().optional().describe("Email subject. Optional for replies (Gmail uses the thread subject)."),
+        body: z.string().describe("Email body (plain text)."),
+        thread_id: z
+          .string()
+          .optional()
+          .describe("Gmail thread id if this is a reply. Omit for a new email."),
+        contact_row_ref: z
+          .string()
+          .optional()
+          .describe(
+            "Sheets contact row reference for CRM linking — value typically returned by sheets tools when working with a contacts sheet.",
+          ),
+      },
+      annotations: {
+        title: "Create email draft",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ to_email, subject, body, thread_id, contact_row_ref }, extra) => {
+      try {
+        const db = getDb()
+        const id = randomUUID()
+        db.prepare(
+          "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
+        ).run(id, to_email, thread_id ?? null, subject ?? null, body)
+        let draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+        const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
+        try {
+          const outputId = await syncDraftOutput(
+            draft,
+            { contactRowRef: contact_row_ref ?? null },
+            context,
+          )
+          if (outputId && outputId !== draft.output_id) {
+            persistDraftOutputId(db, draft.id, outputId)
+            draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+          }
+        } catch (outputError) {
+          db.prepare("DELETE FROM drafts WHERE id = ?").run(id)
+          throw outputError
         }
-      } catch (outputError) {
-        db.prepare("DELETE FROM drafts WHERE id = ?").run(id)
-        throw outputError
+        return text(draft)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
       }
-      return text(draft)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+    },
+  )
 
-  server.tool("gmail_send_draft", "Send a pending draft via Gmail API. The email is queued and sent with automatic retries.", {
-    draft_id: z.string().describe("Local draft ID"),
-  }, async ({ draft_id }) => {
-    try {
-      const db = getDb()
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-      if (!draft) return err("Draft not found")
-      if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be sent (status: ${draft.status})`)
+  server.registerTool(
+    "gmail_send_draft",
+    {
+      title: "Send draft",
+      description: `Enqueue a draft for sending via the Gmail API. Sends asynchronously with retries; poll gmail_get_send_status for outcome.
 
-      const holabossUserId = process.env.HOLABOSS_USER_ID ?? ""
-      const jobId = enqueueSend({
-        draft_id: draft.id,
-        to_email: draft.to_email,
-        subject: draft.subject ?? "",
-        body: draft.body,
-        thread_id: draft.gmail_thread_id ?? undefined,
-        holaboss_user_id: holabossUserId,
-      })
-
-      db.prepare(
-        "UPDATE drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
-      ).run(draft_id)
-
-      return text({
-        draft_id,
-        job_id: jobId,
-        output_id: draft.output_id,
-        status: "queued",
-      })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  server.tool("gmail_update_draft", "Update the content of a pending email draft.", {
-    draft_id: z.string().describe("Local draft ID"),
-    to_email: z.string().optional().describe("New recipient email"),
-    subject: z.string().optional().describe("New subject"),
-    body: z.string().optional().describe("New body text"),
-    thread_id: z.string().optional().describe("Gmail thread ID to link as reply"),
-  }, async ({ draft_id, to_email, subject, body, thread_id }) => {
-    try {
-      const db = getDb()
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-      if (!draft) return err("Draft not found")
-      if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be edited (status: ${draft.status})`)
-
-      db.prepare(`
-        UPDATE drafts SET
-          to_email = COALESCE(?, to_email),
-          subject = COALESCE(?, subject),
-          body = COALESCE(?, body),
-          gmail_thread_id = COALESCE(?, gmail_thread_id),
-          status = 'pending',
-          error_message = NULL,
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(to_email ?? null, subject ?? null, body ?? null, thread_id ?? null, draft_id)
-
-      const updated = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
+When to use: the user has approved a draft and wants it sent.
+Prerequisites: a draft created by gmail_draft_reply.
+Valid states: 'pending' or 'failed' (retries a failed draft). Calling on 'queued' / 'sent' / 'discarded' returns isError.
+Side effects: status flips to 'queued'. The actual Gmail API call happens asynchronously.
+Returns: { draft_id, job_id, output_id?, status: 'queued' }.
+Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
+      inputSchema: {
+        draft_id: z.string().describe("Local draft id returned by gmail_draft_reply."),
+      },
+      annotations: {
+        title: "Send draft",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ draft_id }) => {
       try {
-        await syncDraftOutput(updated)
-      } catch (outputError) {
-        console.warn("[gmail] failed to sync draft output after update", outputError)
+        const db = getDb()
+        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        if (!draft) return err("Draft not found")
+        if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be sent (status: ${draft.status})`)
+
+        const holabossUserId = process.env.HOLABOSS_USER_ID ?? ""
+        const jobId = enqueueSend({
+          draft_id: draft.id,
+          to_email: draft.to_email,
+          subject: draft.subject ?? "",
+          body: draft.body,
+          thread_id: draft.gmail_thread_id ?? undefined,
+          holaboss_user_id: holabossUserId,
+        })
+
+        db.prepare(
+          "UPDATE drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
+        ).run(draft_id)
+
+        return text({
+          draft_id,
+          job_id: jobId,
+          output_id: draft.output_id,
+          status: "queued",
+        })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
       }
-      return text(updated)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+    },
+  )
 
-  server.tool("gmail_get_send_status", "Check the send status of a draft", {
-    draft_id: z.string().describe("Local draft ID"),
-  }, async ({ draft_id }) => {
-    try {
-      const db = getDb()
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-      if (!draft) return err("Draft not found")
-      return text({
-        draft_id,
-        status: draft.status,
-        error_message: draft.error_message,
-        sent_at: draft.sent_at,
-        updated_at: draft.updated_at,
-      })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+  server.registerTool(
+    "gmail_update_draft",
+    {
+      title: "Update draft",
+      description: `Edit an unsent draft. Only fields you supply change. If the draft was 'failed', status resets to 'pending' so you can retry by calling gmail_send_draft.
 
-  server.tool("gmail_delete_draft", "Delete an email draft. Only pending or failed drafts can be deleted.", {
-    draft_id: z.string().describe("Local draft ID"),
-  }, async ({ draft_id }) => {
-    try {
-      const db = getDb()
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-      if (!draft) return err("Draft not found")
-      if (draft.status === "queued") return err("Cannot delete a draft that is currently being sent")
-      if (draft.status === "sent") return err("Cannot delete a sent email")
-      db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
-      return text({ deleted: true, draft_id })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+When to use: revise a draft before sending, or fix a failed send and retry.
+Valid states: 'pending' or 'failed'. Calling on 'queued' / 'sent' / 'discarded' returns isError.
+Returns: full updated DraftRecord.
+Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
+      inputSchema: {
+        draft_id: z.string().describe("Local draft id returned by gmail_draft_reply or gmail_list_drafts."),
+        to_email: z.string().optional().describe("New recipient email."),
+        subject: z.string().optional().describe("New subject."),
+        body: z.string().optional().describe("New body text."),
+        thread_id: z.string().optional().describe("Gmail thread id to link this draft as a reply."),
+      },
+      annotations: {
+        title: "Update draft",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ draft_id, to_email, subject, body, thread_id }) => {
+      try {
+        const db = getDb()
+        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        if (!draft) return err("Draft not found")
+        if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be edited (status: ${draft.status})`)
 
-  server.tool("gmail_list_drafts", "List email drafts", {
-    status: z.string().optional().describe("Filter by status (pending, queued, sent, failed, discarded). Omit to list all."),
-    limit: z.number().optional().describe("Max results, default 20"),
-  }, async ({ status, limit }) => {
-    try {
-      const db = getDb()
-      const max = limit ?? 20
-      let rows: DraftRecord[]
-      if (status) {
-        rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as DraftRecord[]
-      } else {
-        rows = db.prepare("SELECT * FROM drafts ORDER BY created_at DESC LIMIT ?").all(max) as DraftRecord[]
+        db.prepare(`
+          UPDATE drafts SET
+            to_email = COALESCE(?, to_email),
+            subject = COALESCE(?, subject),
+            body = COALESCE(?, body),
+            gmail_thread_id = COALESCE(?, gmail_thread_id),
+            status = 'pending',
+            error_message = NULL,
+            updated_at = datetime('now')
+          WHERE id = ?
+        `).run(to_email ?? null, subject ?? null, body ?? null, thread_id ?? null, draft_id)
+
+        const updated = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
+        try {
+          await syncDraftOutput(updated)
+        } catch (outputError) {
+          console.warn("[gmail] failed to sync draft output after update", outputError)
+        }
+        return text(updated)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
       }
-      return text(rows)
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
+    },
+  )
+
+  server.registerTool(
+    "gmail_get_send_status",
+    {
+      title: "Get send status",
+      description: `Read the current send status of a draft without mutating it.
+
+When to use: after gmail_send_draft, poll until status is 'sent' (success) or 'failed' (error_message will explain).
+Returns: { draft_id, status, error_message?, sent_at?, updated_at }.
+States: 'pending' | 'queued' | 'sent' | 'failed' | 'discarded'.
+Errors: 'Draft not found'.`,
+      inputSchema: {
+        draft_id: z.string().describe("Local draft id returned by gmail_draft_reply or gmail_send_draft."),
+      },
+      annotations: {
+        title: "Get send status",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ draft_id }) => {
+      try {
+        const db = getDb()
+        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        if (!draft) return err("Draft not found")
+        return text({
+          draft_id,
+          status: draft.status,
+          error_message: draft.error_message,
+          sent_at: draft.sent_at,
+          updated_at: draft.updated_at,
+        })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "gmail_delete_draft",
+    {
+      title: "Delete draft",
+      description: `Permanently delete an unsent draft. Cannot be undone. Does NOT recall an already-sent email.
+
+When to use: throw away a draft the user no longer wants.
+Valid states: 'pending' or 'failed'. 'queued' (currently being sent) and 'sent' (already delivered) cannot be deleted.
+Returns: { deleted: true, draft_id }.
+Errors: 'Draft not found', 'Cannot delete a draft that is currently being sent', 'Cannot delete a sent email'.`,
+      inputSchema: {
+        draft_id: z.string().describe("Local draft id (must be 'pending' or 'failed')."),
+      },
+      annotations: {
+        title: "Delete draft",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ draft_id }) => {
+      try {
+        const db = getDb()
+        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        if (!draft) return err("Draft not found")
+        if (draft.status === "queued") return err("Cannot delete a draft that is currently being sent")
+        if (draft.status === "sent") return err("Cannot delete a sent email")
+        db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
+        return text({ deleted: true, draft_id })
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  server.registerTool(
+    "gmail_list_drafts",
+    {
+      title: "List local drafts",
+      description: `List local Holaboss-managed email drafts ordered by created_at DESC. Does NOT list drafts visible in the Gmail web UI — only drafts created via gmail_draft_reply.
+
+When to use: find a specific local draft, audit recent send attempts, filter by lifecycle state.
+Returns: array of DraftRecord. Empty array if none match.`,
+      inputSchema: {
+        status: z
+          .enum(["pending", "queued", "sent", "failed", "discarded"])
+          .optional()
+          .describe("Filter by lifecycle state. Omit to list all states."),
+        limit: z.number().int().positive().max(200).optional().describe("Max results, default 20, max 200."),
+      },
+      annotations: {
+        title: "List local drafts",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ status, limit }) => {
+      try {
+        const db = getDb()
+        const max = limit ?? 20
+        let rows: DraftRecord[]
+        if (status) {
+          rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as DraftRecord[]
+        } else {
+          rows = db.prepare("SELECT * FROM drafts ORDER BY created_at DESC LIMIT ?").all(max) as DraftRecord[]
+        }
+        return text(rows)
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
 
   return server
 }

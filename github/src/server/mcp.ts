@@ -12,6 +12,7 @@ import {
   listUserRepos,
 } from "./github-api"
 
+// Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
 }
@@ -26,12 +27,29 @@ function createMcpServer(): McpServer {
     version: "1.0.0",
   })
 
-  server.tool(
+  server.registerTool(
     "github_list_repos",
-    "List user's repositories sorted by recent activity",
     {
-      username: z.string().optional().describe("GitHub username (omit for authenticated user)"),
-      limit: z.number().optional().describe("Max results, default 10"),
+      title: "List repos",
+      description: `List a user's repositories ordered by recent push activity DESC.
+
+When to use: discovery — "what repos does X own?" or list the authenticated user's repos.
+Returns: array of { id, name, full_name, description, language, stars, forks, updated_at, html_url }.
+Errors: "Failed to list repos: <gh error>" if username is invalid or rate-limited.`,
+      inputSchema: {
+        username: z
+          .string()
+          .optional()
+          .describe("GitHub username, e.g. 'torvalds'. Omit to list the authenticated user's repos."),
+        limit: z.number().int().positive().max(100).optional().describe("Max results, default 10, max 100."),
+      },
+      annotations: {
+        title: "List repos",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ username, limit }) => {
       try {
@@ -43,13 +61,27 @@ function createMcpServer(): McpServer {
     },
   )
 
-  server.tool(
+  server.registerTool(
     "github_recent_activity",
-    "Get recent commits, PRs, and releases for a repo",
     {
-      owner: z.string().describe("Repository owner"),
-      repo: z.string().describe("Repository name"),
-      days: z.number().optional().describe("Number of days to look back, default 7"),
+      title: "Recent repo activity",
+      description: `Aggregate recent commits, merged PRs, and releases for a single repo over a time window.
+
+When to use: "what happened in repo X recently?" — produces a digest for daily/weekly summaries.
+When NOT to use: to read a single commit/PR's full body — use github_get_commit / github_get_pr after spotting it here.
+Returns: { commits: [{ sha, author, message, date }], pull_requests: [{ number, title, state, merged_at, author }], releases: [{ tag, name, published_at }] }.`,
+      inputSchema: {
+        owner: z.string().describe("Repository owner login, e.g. 'anthropics' or 'torvalds'."),
+        repo: z.string().describe("Repository name without owner, e.g. 'claude-code' or 'linux'."),
+        days: z.number().int().positive().max(90).optional().describe("Look-back window in days. Default 7, max 90."),
+      },
+      annotations: {
+        title: "Recent repo activity",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ owner, repo, days }) => {
       try {
@@ -61,13 +93,27 @@ function createMcpServer(): McpServer {
     },
   )
 
-  server.tool(
+  server.registerTool(
     "github_get_commit",
-    "Get full commit details with file changes",
     {
-      owner: z.string().describe("Repository owner"),
-      repo: z.string().describe("Repository name"),
-      sha: z.string().describe("Commit SHA"),
+      title: "Get commit",
+      description: `Fetch full commit metadata including the file change summary.
+
+Prerequisites: sha typically from github_recent_activity.
+Returns: { sha, author, committer, message, committed_at, html_url, files: [{ filename, status, additions, deletions, changes, patch? }] }.
+Errors: 'Commit not found' if sha doesn't exist in repo. "Failed to get commit: <gh error>" for API failures.`,
+      inputSchema: {
+        owner: z.string().describe("Repository owner login."),
+        repo: z.string().describe("Repository name without owner."),
+        sha: z.string().describe("Full or abbreviated commit SHA, e.g. 'a1b2c3d' or '<40-char-sha>'."),
+      },
+      annotations: {
+        title: "Get commit",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ owner, repo, sha }) => {
       try {
@@ -80,13 +126,27 @@ function createMcpServer(): McpServer {
     },
   )
 
-  server.tool(
+  server.registerTool(
     "github_get_pr",
-    "Get pull request details",
     {
-      owner: z.string().describe("Repository owner"),
-      repo: z.string().describe("Repository name"),
-      number: z.number().describe("Pull request number"),
+      title: "Get pull request",
+      description: `Fetch a single pull request with body, status, reviewers, and merge state.
+
+Prerequisites: number typically from github_recent_activity.
+Returns: { number, title, body, state ('open' | 'closed'), merged, author, created_at, updated_at, head, base, html_url, ... }.
+Errors: 'Pull request not found' if number doesn't exist. "Failed to get PR: <gh error>" for API failures.`,
+      inputSchema: {
+        owner: z.string().describe("Repository owner login."),
+        repo: z.string().describe("Repository name without owner."),
+        number: z.number().int().positive().describe("Pull request number, e.g. 1234."),
+      },
+      annotations: {
+        title: "Get pull request",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ owner, repo, number }) => {
       try {
@@ -99,13 +159,27 @@ function createMcpServer(): McpServer {
     },
   )
 
-  server.tool(
+  server.registerTool(
     "github_list_releases",
-    "List releases for a repo",
     {
-      owner: z.string().describe("Repository owner"),
-      repo: z.string().describe("Repository name"),
-      limit: z.number().optional().describe("Max results, default 5"),
+      title: "List releases",
+      description: `List repo releases ordered by published date DESC.
+
+When to use: build a release-notes digest, find the most recent version, look up release bodies.
+Returns: array of { id, tag_name, name, body, published_at, draft, prerelease, html_url }.
+Errors: "Failed to list releases: <gh error>" for API failures.`,
+      inputSchema: {
+        owner: z.string().describe("Repository owner login."),
+        repo: z.string().describe("Repository name without owner."),
+        limit: z.number().int().positive().max(100).optional().describe("Max results, default 5, max 100."),
+      },
+      annotations: {
+        title: "List releases",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async ({ owner, repo, limit }) => {
       try {
