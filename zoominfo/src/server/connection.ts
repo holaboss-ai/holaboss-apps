@@ -1,4 +1,4 @@
-import { getJwt } from "./zoominfo-client"
+import { apiGet } from "./zoominfo-client"
 
 export interface ConnectionStatus {
   connected: boolean
@@ -6,24 +6,14 @@ export interface ConnectionStatus {
 }
 
 /**
- * The cheapest connection check is a successful auth handshake.
- * `getJwt()` either returns a cached token (no network) or hits
- * `POST /authenticate` and caches the result for 50 minutes.
- *
- * Note: ZoomInfo's API does not expose `daily_quota_remaining` per the
- * Phase 0 endpoint review (no public Usage endpoint we can hit without
- * additional credentials), so it is omitted from the status payload.
- * See docs/plans/zoominfo.md §10 open question.
+ * Probes ZoomInfo through the broker proxy with a cheap metadata call.
+ * Per plan §3, `GET /lookup/inputfields/contact/search` is lightweight and
+ * does not consume credits. If the broker doesn't have a credential for
+ * this workspace it surfaces as `not_connected`; any 2xx → connected.
  */
 export async function getConnectionStatus(): Promise<ConnectionStatus> {
-  try {
-    await getJwt()
-    return { connected: true }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    if (msg.toLowerCase().includes("not connected") || msg === "not_connected") {
-      return { connected: false }
-    }
-    return { connected: false, error: msg }
-  }
+  const r = await apiGet<unknown>("/lookup/inputfields/contact/search")
+  if (r.ok) return { connected: true }
+  if (r.error.code === "not_connected") return { connected: false }
+  return { connected: false, error: r.error.message }
 }

@@ -4,7 +4,7 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { closeDb, getDb, resetDbForTests } from "../../src/server/db"
-import { resetJwtCache, setBridgeClient } from "../../src/server/zoominfo-client"
+import { setBridgeClient } from "../../src/server/zoominfo-client"
 import {
   enrichCompanyImpl,
   enrichContactImpl,
@@ -25,30 +25,25 @@ describe("zoominfo tools", () => {
     resetDbForTests(path.join(tmp, "zoominfo.db"))
     getDb()
     bridge = new MockBridge()
-    bridge.setCredentialPayload({ jwt: "test-jwt" })
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
   })
 
   afterEach(() => {
-    MockBridge.restoreGlobalFetch()
     setBridgeClient(null)
     closeDb()
     rmSync(tmp, { recursive: true, force: true })
   })
 
   describe("get_connection_status", () => {
-    it("returns connected:true on successful auth", async () => {
-      // jwt cache is hot from setCredentialPayload({ jwt }) — no /authenticate call needed.
+    it("returns connected:true on successful proxy probe", async () => {
+      bridge.whenGet("/lookup/inputfields/contact/search").respond(200, {})
       const r = await getConnectionStatusImpl({})
       expect(r.ok).toBe(true)
       if (r.ok) expect(r.data.connected).toBe(true)
     })
 
     it("returns connected:false when broker says not connected", async () => {
-      bridge.failGetCredential(new Error("No zoominfo integration configured."))
-      resetJwtCache()
+      bridge.whenAny().throwOnce(new Error("No zoominfo integration configured. Connect via Integrations settings."))
       const r = await getConnectionStatusImpl({})
       expect(r.ok).toBe(true)
       if (r.ok) expect(r.data.connected).toBe(false)
@@ -76,7 +71,7 @@ describe("zoominfo tools", () => {
         expect(r.data.contacts[0].first_name).toBe("Alice")
         expect(r.data.has_next).toBe(false)
       }
-      const call = bridge.calls.find((c) => c.endpoint === "/search/contact")
+      const call = bridge.calls.find((c) => c.endpoint.endsWith("/search/contact"))
       expect(call!.body).toMatchObject({
         page: 1,
         rpp: 25,
@@ -89,7 +84,7 @@ describe("zoominfo tools", () => {
       bridge.whenPost("/search/contact").respond(200, { totalResults: 0, data: [] })
       const r = await searchContactsImpl({ page_size: 500 })
       expect(r.ok).toBe(true)
-      const call = bridge.calls.find((c) => c.endpoint === "/search/contact")
+      const call = bridge.calls.find((c) => c.endpoint.endsWith("/search/contact"))
       expect((call!.body as { rpp: number }).rpp).toBe(100)
     })
 
@@ -286,7 +281,7 @@ describe("zoominfo tools", () => {
         expect(r.data.executives).toHaveLength(1)
         expect(r.data.executives[0].job_title).toBe("CTO")
       }
-      const call = bridge.calls.find((c) => c.endpoint === "/search/contact")
+      const call = bridge.calls.find((c) => c.endpoint.endsWith("/search/contact"))
       expect(call!.body).toMatchObject({
         companyId: "c_1",
         managementLevel: "C-Level,VP-Level",

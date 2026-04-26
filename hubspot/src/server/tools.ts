@@ -50,8 +50,8 @@ export function resetPortalIdCacheForTests(): void {
 // These are the canonical "engagement → CRM record" type ids per HubSpot's
 // public list of association types. They are stable across portals.
 //
-// Assumption (per Plan §10): the OAuth grant from Nango includes the standard
-// CRM scopes (crm.objects.{contacts,companies,deals}.{read,write},
+// Assumption (per Plan §10): the OAuth grant exposed via @holaboss/bridge
+// includes the standard CRM scopes (crm.objects.{contacts,companies,deals}.{read,write},
 // crm.schemas.{contacts,deals}.read, plus engagement scopes for notes/tasks).
 const ASSOC = {
   noteToContact: 202,

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import { MockBridge } from "./fixtures/mock-bridge"
 import type { Server } from "node:http"
@@ -17,14 +17,12 @@ describe("ZoomInfo Module E2E", () => {
     process.env.DB_PATH = path.join(tmp, "zoominfo-e2e.db")
 
     const { startMcpServer } = await import("../src/server/mcp")
-    const { setBridgeClient, resetJwtCache } = await import("../src/server/zoominfo-client")
+    const { setBridgeClient } = await import("../src/server/zoominfo-client")
     const { getDb } = await import("../src/server/db")
 
     const bridge = new MockBridge()
-    bridge.whenAuthenticate().respond({ jwt: "fake-jwt-bootstrap" })
+    bridge.whenAny().respond(200, {})
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
 
     getDb()
 
@@ -32,19 +30,15 @@ describe("ZoomInfo Module E2E", () => {
     await waitForServer(`http://localhost:${MCP_PORT}/mcp/health`)
   }, 15_000)
 
-  beforeEach(async () => {
-    const { resetJwtCache } = await import("../src/server/zoominfo-client")
-    resetJwtCache()
-  })
-
   afterAll(async () => {
     if (mcpServer) {
       await new Promise<void>((resolve) => mcpServer!.close(() => resolve()))
       mcpServer = null
     }
     const { closeDb } = await import("../src/server/db")
+    const { setBridgeClient } = await import("../src/server/zoominfo-client")
     closeDb()
-    MockBridge.restoreGlobalFetch()
+    setBridgeClient(null)
     rmSync(tmp, { recursive: true, force: true })
   })
 
@@ -56,20 +50,17 @@ describe("ZoomInfo Module E2E", () => {
   })
 
   it("search_contacts writes a success audit row", async () => {
-    const { setBridgeClient, resetJwtCache } = await import("../src/server/zoominfo-client")
+    const { setBridgeClient } = await import("../src/server/zoominfo-client")
     const { searchContactsImpl } = await import("../src/server/tools")
     const { wrapTool, listRecentActions } = await import("../src/server/audit")
 
     const bridge = new MockBridge()
-    bridge.whenAuthenticate().respond({ jwt: "jwt-1" })
     bridge.whenPost("/search/contact").respond(200, {
       currentPage: 1,
       totalResults: 1,
       data: [{ id: "p_1", firstName: "Alice", lastName: "Johnson", jobTitle: "CMO" }],
     })
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
 
     const wrapped = wrapTool("zoominfo_search_contacts", searchContactsImpl)
     const result = await wrapped({ job_titles: ["CMO"] })
@@ -82,15 +73,12 @@ describe("ZoomInfo Module E2E", () => {
   })
 
   it("enrich_contact validation_failed writes an error audit row", async () => {
-    const { setBridgeClient, resetJwtCache } = await import("../src/server/zoominfo-client")
+    const { setBridgeClient } = await import("../src/server/zoominfo-client")
     const { enrichContactImpl } = await import("../src/server/tools")
     const { wrapTool, listRecentActions } = await import("../src/server/audit")
 
     const bridge = new MockBridge()
-    bridge.whenAuthenticate().respond({ jwt: "jwt-2" })
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
 
     const wrapped = wrapTool("zoominfo_enrich_contact", enrichContactImpl)
     const result = await wrapped({})
@@ -104,15 +92,13 @@ describe("ZoomInfo Module E2E", () => {
     expect(errorRow!.error_code).toBe("validation_failed")
   })
 
-  it("not_connected propagates from credential failure", async () => {
-    const { setBridgeClient, resetJwtCache } = await import("../src/server/zoominfo-client")
+  it("not_connected propagates from broker failure", async () => {
+    const { setBridgeClient } = await import("../src/server/zoominfo-client")
     const { searchContactsImpl } = await import("../src/server/tools")
 
     const bridge = new MockBridge()
-    bridge.failGetCredential(new Error("No zoominfo integration configured. Connect via Integrations settings."))
+    bridge.whenAny().throwOnce(new Error("No zoominfo integration configured. Connect via Integrations settings."))
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
 
     const result = await searchContactsImpl({ job_titles: ["CTO"] })
     expect(result.ok).toBe(false)

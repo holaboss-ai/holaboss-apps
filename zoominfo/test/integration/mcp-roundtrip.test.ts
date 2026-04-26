@@ -22,7 +22,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 
 import { closeDb, getDb, resetDbForTests } from "../../src/server/db"
 import { registerTools } from "../../src/server/tools"
-import { resetJwtCache, setBridgeClient } from "../../src/server/zoominfo-client"
+import { setBridgeClient } from "../../src/server/zoominfo-client"
 import { MockBridge } from "../fixtures/mock-bridge"
 
 const EXPECTED_TOOLS = [
@@ -47,10 +47,11 @@ describe("MCP roundtrip — registerTools wiring", () => {
     getDb()
 
     bridge = new MockBridge()
-    bridge.setCredentialPayload({ jwt: "test-jwt" })
+    // Default: just the connection-status probe path returns 200 — every other
+    // call must register its own rule (otherwise mock-bridge throws no-match,
+    // which is the desired "did the test forget to mock?" signal).
+    bridge.whenGet("/lookup/inputfields/contact/search").respond(200, {})
     setBridgeClient(bridge.asClient())
-    resetJwtCache()
-    bridge.useGlobalFetchMock()
 
     server = new McpServer({ name: "zoominfo-test", version: "0.0.0" })
     registerTools(server)
@@ -63,7 +64,6 @@ describe("MCP roundtrip — registerTools wiring", () => {
   afterEach(async () => {
     await client.close().catch(() => {})
     await server.close().catch(() => {})
-    MockBridge.restoreGlobalFetch()
     setBridgeClient(null)
     closeDb()
     rmSync(tmp, { recursive: true, force: true })

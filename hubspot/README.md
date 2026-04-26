@@ -1,6 +1,6 @@
 # HubSpot Module
 
-A Holaboss module that gives the workspace agent CRM capabilities against the user's HubSpot portal via bridge+Nango.
+A Holaboss module that gives the workspace agent CRM capabilities against the user's HubSpot portal via the @holaboss/bridge integration broker.
 
 ## What it does
 

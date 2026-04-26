@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import { apiPost, getJwt } from "./zoominfo-client"
+import { apiGet, apiPost } from "./zoominfo-client"
 import { wrapTool } from "./audit"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type {
@@ -204,13 +204,14 @@ export interface GetConnectionStatusInput {
 export async function getConnectionStatusImpl(
   _input: Record<string, never>,
 ): Promise<Result<{ connected: boolean } & ToolSuccessMeta, ZoomInfoError>> {
-  // The cheapest probe is a JWT mint — it returns a cached token (no network)
-  // or hits POST /authenticate. A successful exchange means the credential is
-  // present and accepted. (Per Phase 0: ZoomInfo does not expose
-  // daily_quota_remaining on a public endpoint we can hit without additional
-  // setup, so it is omitted from outputSchema — see plan §10.)
-  try {
-    await getJwt()
+  // Cheapest probe through the @holaboss/bridge proxy: a metadata GET that
+  // doesn't consume credits. The broker handles ZoomInfo's auth dance
+  // internally — a 2xx here proves both connectivity and credential validity.
+  // (Per Phase 0: ZoomInfo does not expose `daily_quota_remaining` on a public
+  // endpoint we can hit without additional setup, so it is omitted from
+  // outputSchema — see plan §10.)
+  const r = await apiGet<unknown>("/lookup/inputfields/contact/search")
+  if (r.ok) {
     return {
       ok: true,
       data: {
@@ -219,30 +220,18 @@ export async function getConnectionStatusImpl(
         result_summary: "ZoomInfo connection verified",
       },
     }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    const lower = msg.toLowerCase()
-    if (
-      lower.includes("not connected") ||
-      lower.includes("not_connected") ||
-      lower.includes("no zoominfo integration") ||
-      lower.includes("no zoominfo configured") ||
-      lower.includes("not configured")
-    ) {
-      return {
-        ok: true,
-        data: {
-          connected: false,
-          zoominfo_object: "account",
-          result_summary: "ZoomInfo not connected",
-        },
-      }
-    }
+  }
+  if (r.error.code === "not_connected") {
     return {
-      ok: false,
-      error: { code: "upstream_error", message: msg },
+      ok: true,
+      data: {
+        connected: false,
+        zoominfo_object: "account",
+        result_summary: "ZoomInfo not connected",
+      },
     }
   }
+  return { ok: false, error: r.error }
 }
 
 export interface SearchContactsInput {

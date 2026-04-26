@@ -185,36 +185,21 @@ inputSchema: {
 
 ## 6. Auth bootstrap
 
-Two paths — pick one based on what Nango supports for ZoomInfo:
-
-**Path A — Nango fetches credentials per call (preferred):**
-Same pattern as attio. `getCredential()` returns the raw username/password (or JWT) from Nango.
-
-**Path B — module manages JWT cache:**
-- `getJwt()` checks an in-process cache. If absent or older than 50 minutes, POST `/authenticate` and cache.
-- All other calls: `Authorization: Bearer <jwt>`.
-- On 401, evict cache and retry once.
+Use `createIntegrationClient("zoominfo").proxy(...)` from the `@holaboss/bridge` SDK shim. The Holaboss broker handles ZoomInfo's `/authenticate` → JWT exchange and `Authorization: Bearer ...` injection internally — modules NEVER mint or cache JWTs themselves.
 
 ```ts
-let cachedJwt: { token: string; expiresAt: number } | null = null
-
-async function getJwt(): Promise<string> {
-  if (cachedJwt && Date.now() < cachedJwt.expiresAt) return cachedJwt.token
-  const creds = await getCredentialFromNango()  // { username, password } OR { username, clientId, privateKey }
-  const r = await fetch("https://api.zoominfo.com/authenticate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(creds),
-  })
-  if (!r.ok) throw new Error("not_connected")
-  const { jwt } = await r.json()
-  cachedJwt = { token: jwt, expiresAt: Date.now() + 50 * 60 * 1000 }   // 50-min safety margin
-  return jwt
-}
+import { createIntegrationClient } from "./holaboss-bridge"
+const client = createIntegrationClient("zoominfo")
+const r = await client.proxy<...>({
+  method: "POST",
+  endpoint: "https://api.zoominfo.com/search/contact",
+  body: { rpp: 25, jobTitle: "CMO" },
+})
+// r === { data, status, headers }
 ```
 
 Status mapping (same shape as Apollo):
-- 401/403 → `not_connected` (also evict cached JWT)
+- 401/403 → `not_connected` (broker will refresh credentials on its next attempt)
 - 422/400 → `validation_failed`
 - 429 → `rate_limited` with `retry_after`
 - 5xx → `upstream_error`
@@ -267,7 +252,7 @@ Target: 12–15 tests.
 
 ## 10. Open questions for human review
 
-- [ ] **Auth path A vs B** — does the existing Nango connector for ZoomInfo handle the JWT exchange itself, or do we need to manage the JWT cache in-module? Confirm with Nango owner.
+- [ ] **Broker connector** — confirm the Holaboss broker has a `zoominfo` connector that handles the `/authenticate` JWT exchange + `Authorization: Bearer ...` injection. If not, that's a Holaboss-side ticket; the module's code shape stays the same.
 - [ ] **Licensing language** — the "data is licensed; only populate user's own CRM" line in tool descriptions: get sign-off from legal that this phrasing matches our Master Agreement with ZoomInfo.
 - [ ] **Quota visibility** — does ZoomInfo's API expose `daily_quota_remaining` per request? If yes, surface in `_get_connection_status`. If no, drop from outputSchema.
 - [ ] **Should v1 include `zoominfo_get_funding_history`?** ZoomInfo has rich firmographic news — could be a separate tool. Defer to v2 unless sales explicitly asks.

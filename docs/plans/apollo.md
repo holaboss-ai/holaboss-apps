@@ -36,7 +36,7 @@ If a prompt outside this list comes up, the agent falls back to a general answer
 ## 3. API research (verify against current docs as step 1)
 
 - **Base URL:** `https://api.apollo.io/v1`
-- **Auth:** API key in header `X-Api-Key: <key>`. Single-tenant per user. Stored in Nango under destination `apollo`.
+- **Auth:** API key in header `X-Api-Key: <key>`. Single-tenant per user. The Holaboss broker injects the header — modules NEVER see the raw key.
 - **Rate limits:** Free tier 100 req/hr, 600 req/day. Paid tiers higher. **Treat 429 as expected** — surface `{ code: 'rate_limited', retry_after: <secs> }` so the agent backs off.
 - **Pagination:** Most list endpoints use `page` + `per_page` (max 100). Return `pagination: { page, per_page, total_entries, total_pages }` if useful.
 - **Credit cost (CRITICAL):** `people/match` (email enrichment) consumes credits. Document this in the tool description so the agent doesn't speculatively fan out.
@@ -190,7 +190,7 @@ outputSchema: {
 
 Copy `attio/src/server/attio-client.ts` → `apollo/src/server/apollo-client.ts`. Changes:
 
-- `MODULE_CONFIG.destination = "apollo"` (so Nango knows which connector to fetch).
+- `MODULE_CONFIG.destination = "apollo"` (so the broker knows which connector to use).
 - Auth header: `X-Api-Key: <token>` (NOT `Authorization: Bearer ...`).
 - Map status → error code:
 
@@ -268,7 +268,7 @@ Target: 14–18 tests total.
 ## 10. Open questions for human review
 
 - [ ] **Confirm endpoint paths** against the current Apollo API docs before Phase 2. The list in §3 is best-effort from prior knowledge.
-- [ ] **Nango connector slug** — does it already exist? If not, we'll need to add it before this module can run end-to-end. Confirm with whoever owns Nango setup.
+- [ ] **Broker connector** — does the Holaboss broker already have an `apollo` connector configured? If not, that's a separate Holaboss-side ticket and the module won't work end-to-end until it lands.
 - [ ] **Should `apollo_create_contact` be in v1?** I argue defer — Apollo prefers searching the existing 275M-contact DB over creating fresh contacts. If sales team disagrees, add as tool #11.
 - [ ] **Brand color for `styles.css`** — Apollo's brand is a muted teal/blue. Pick: `oklch(0.55 0.13 220)` or fetch from Apollo's brand kit.
 - [ ] **`apollo_search_people` returns email when?** Confirm whether the search endpoint returns email addresses for free-tier users or requires `enrich_person` for any contact info. This dictates whether the agent always needs a 2-step flow.

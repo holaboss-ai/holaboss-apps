@@ -15,7 +15,7 @@ This guide is the "how to actually ship the thing" complement.
 1. **Pick a base shape**: `_template` (publishing flow with SQLite queue) OR `attio` (read/write external API + Result type + audit log).
 2. **Copy** the chosen base into a new directory.
 3. **Customize** identifiers, types, MCP tools, and external API client.
-4. **Wire auth** through `holaboss-bridge` (Nango is the credential broker).
+4. **Wire auth** by importing `createIntegrationClient` from the local `./holaboss-bridge` shim (which re-exports from `@holaboss/bridge` SDK). The SDK proxies all calls through the Holaboss broker — modules NEVER receive raw credentials, NEVER mint their own tokens.
 5. **Write tools** strictly per the convention — `registerTool`, structured description, `inputSchema` with `.describe()` on every field, `outputSchema`, explicit annotations.
 6. **Add a recipe** to `MCP_RECIPES.md` for any non-obvious flow your tools enable.
 7. **Test**: unit (Impl-level), integration (mock bridge), e2e (compose-up + curl), then sandbox e2e via the parent repo's runner.
@@ -31,7 +31,7 @@ Before opening an editor:
 - [ ] Read the target service's API docs end-to-end (auth, rate limits, pagination, webhook support).
 - [ ] Identify the 5–10 highest-value tools. Do NOT try to wrap the entire API. Each tool you add is permanent context the agent reads on every list-tools call.
 - [ ] Sketch the user intents the module should serve. If you can't write 3 user prompts, you're guessing.
-- [ ] Check whether Nango already has a connector for the service. If yes, auth is half-solved. If no, plan for token storage.
+- [ ] Confirm whether the Holaboss broker has a connector configured for the service. If yes, auth is solved (the broker injects credentials at proxy time). If no, that's a separate Holaboss-side ticket — flag it but don't write per-module credential code.
 - [ ] Decide: does this module hold local state (drafts, queue) or is it a pure read/write proxy to the external API?
 
 If you can answer all of those, you're ready to scaffold.
@@ -125,42 +125,74 @@ pnpm run build       # must succeed
 
 ---
 
-## 3. Auth: Nango + holaboss-bridge
+## 3. Auth: `@holaboss/bridge` SDK (mandatory)
 
-Most modules talk to a third-party API on the user's behalf. The credential is held by **Nango** (the integration broker) and fetched via the `HOLABOSS_INTEGRATION_BROKER_URL` env var injected by the sandbox runtime.
+**Modules NEVER hold raw credentials.** All third-party calls go through the Holaboss broker via the `@holaboss/bridge` SDK. The broker injects auth headers / tokens / JWTs server-side; modules only describe what they want fetched.
 
-### Pattern (copy from `attio/src/server/attio-client.ts`)
+### Non-negotiable rules
+
+- Use the `./holaboss-bridge` shim, which re-exports from `@holaboss/bridge`. Do NOT hand-roll broker URL resolution, credential fetching, JWT exchange, retry logic, or token caching in your module. The SDK is the source of truth.
+- If the SDK is missing something you need (e.g. a new bridge function), update `@holaboss/bridge` upstream — never inline.
+- Your `<module>/src/server/holaboss-bridge.ts` should be exactly the 36-line shim used by every module (see `_template/src/server/holaboss-bridge.ts`).
+
+### Canonical client pattern (copy from `apollo/src/server/apollo-client.ts`)
 
 ```ts
 // <module>-client.ts
-import { resolveHolabossTurnContext } from "./holaboss-bridge"
+import { createIntegrationClient } from "./holaboss-bridge"
+import type { ModuleError, Result } from "../lib/types"
 
-let bridgeClient: BridgeClient | null = null
-export function setBridgeClient(c: BridgeClient) { bridgeClient = c }   // for tests
+const API_BASE = "https://api.example.com/v1"   // your provider's base URL
 
-async function getCredential(): Promise<string> {
-  if (!process.env.HOLABOSS_INTEGRATION_BROKER_URL) {
-    throw new Error("not_connected")   // surfaced as code: 'not_connected'
-  }
-  const r = await fetch(`${process.env.HOLABOSS_INTEGRATION_BROKER_URL}/credentials/${MODULE_CONFIG.destination}`)
-  if (!r.ok) throw new Error("not_connected")
-  return (await r.json()).access_token
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+
+export interface BridgeLike {
+  proxy<T = unknown>(req: { method: HttpMethod; endpoint: string; body?: unknown })
+    : Promise<{ data: T | null; status: number; headers: Record<string, string> }>
 }
 
-export async function apiGet<T>(path: string): Promise<Result<T, ApolloError>> {
+let _client: BridgeLike | null = null
+
+function defaultClient(): BridgeLike {
+  return createIntegrationClient("yourmodule") as BridgeLike   // string slug must match the broker's connector id
+}
+
+export function getBridgeClient(): BridgeLike {
+  if (!_client) _client = defaultClient()
+  return _client
+}
+
+export function setBridgeClient(client: BridgeLike | null): void { _client = client }
+
+export async function call<T>(
+  method: HttpMethod,
+  endpoint: string,   // path part only — the broker prepends auth, you prepend the host base
+  body?: unknown,
+): Promise<Result<T, ModuleError>> {
+  const client = getBridgeClient()
+  let resp
   try {
-    const token = await getCredential()
-    const r = await fetch(`https://api.apollo.io/v1${path}`, { headers: { "X-Api-Key": token } })
-    if (r.status === 401 || r.status === 403) return { ok: false, error: { code: "not_connected", message: "Apollo credential rejected" } }
-    if (r.status === 429) return { ok: false, error: { code: "rate_limited", message: "Apollo rate limit", retry_after: Number(r.headers.get("retry-after") ?? 60) } }
-    if (r.status >= 400 && r.status < 500) return { ok: false, error: { code: "validation_failed", message: await r.text() } }
-    if (!r.ok) return { ok: false, error: { code: "upstream_error", message: `HTTP ${r.status}` } }
-    return { ok: true, data: await r.json() as T }
+    resp = await client.proxy<T>({ method, endpoint: `${API_BASE}${endpoint}`, body })
   } catch (e) {
-    return { ok: false, error: { code: e instanceof Error && e.message === "not_connected" ? "not_connected" : "upstream_error", message: e instanceof Error ? e.message : String(e) } }
+    if (e instanceof Error && /not connected|no .* integration|connect via integrations/i.test(e.message)) {
+      return { ok: false, error: { code: "not_connected", message: "<module> is not connected for this workspace." } }
+    }
+    return { ok: false, error: { code: "upstream_error", message: e instanceof Error ? e.message : String(e) } }
   }
+
+  if (resp.status >= 200 && resp.status < 300) return { ok: true, data: resp.data as T }
+  if (resp.status === 401 || resp.status === 403) return { ok: false, error: { code: "not_connected", message: "<module> credential rejected." } }
+  if (resp.status === 404) return { ok: false, error: { code: "not_found", message: extractErrorMessage(resp.data) ?? "Not found." } }
+  if (resp.status === 429) return { ok: false, error: { code: "rate_limited", message: "Rate limit exceeded.", retry_after: parseRetryAfter(resp.headers) } }
+  if (resp.status >= 400 && resp.status < 500) return { ok: false, error: { code: "validation_failed", message: extractErrorMessage(resp.data) ?? `HTTP ${resp.status}` } }
+  return { ok: false, error: { code: "upstream_error", message: extractErrorMessage(resp.data) ?? `HTTP ${resp.status}` } }
 }
+
+export const apiGet = <T>(endpoint: string) => call<T>("GET", endpoint)
+export const apiPost = <T>(endpoint: string, body: unknown) => call<T>("POST", endpoint, body)
 ```
+
+The `setBridgeClient(...)` test seam lets unit tests inject a `MockBridge` that records `proxy()` calls and returns canned responses. See `apollo/test/fixtures/mock-bridge.ts` for the canonical mock.
 
 ### Connection bootstrap tool
 
@@ -247,11 +279,11 @@ Don't invent synonyms (`_fetch_*`, `_retrieve_*`, `_lookup_*`) — they make the
 
 ### HubSpot
 
-- **API**: OAuth2 user-flow. Token refresh handled by Nango.
+- **API**: OAuth2 user-flow. Token refresh is handled by the Holaboss broker — your module just calls `client.proxy(...)`.
 - **Surface discipline**: HubSpot has 100+ endpoints. Resist mapping them all. Stick to: contacts (search/get/create/update), companies (search/get), deals (create/move-stage), notes/tasks (create). Add tickets / marketing emails / forms only if a user explicitly asks for them.
 - **Properties (custom fields)**: HubSpot has dynamic properties per portal. Mirror Attio's pattern — add `hubspot_describe_schema({ object: 'contacts' })` so the agent learns this portal's properties before `_create_contact`.
 - **Pipelines**: HubSpot deals live in pipelines with stages. Expose `hubspot_list_pipelines` once (read-heavy) and `hubspot_update_deal_stage({ deal_id, pipeline_id, stage_id })`.
-- **Rate limits**: 100 requests / 10 sec per token. Surface `rate_limited` with `retry_after`. The Nango broker re-uses tokens across all your tools, so be conservative.
+- **Rate limits**: 100 requests / 10 sec per token. Surface `rate_limited` with `retry_after`. The broker re-uses tokens across all your tools, so be conservative.
 
 ---
 
@@ -285,7 +317,7 @@ mcp:
     # ... list every tool you registered
 
 integration:
-  destination: "apollo"             # matches Nango connector slug
+  destination: "apollo"             # matches the broker's connector slug
   credential_source: "platform"
   holaboss_user_id_required: true
 

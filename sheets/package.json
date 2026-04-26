@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.2.10",
+    "@holaboss/bridge": "0.1.1-beta.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "^0.7.0",

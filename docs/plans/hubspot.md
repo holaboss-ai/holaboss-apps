@@ -40,7 +40,7 @@ Wrap HubSpot's CRM as a Holaboss module so an agent can:
 ## 3. API research (verify against current docs as step 1)
 
 - **Base URL:** `https://api.hubapi.com`
-- **Auth:** OAuth2 user flow via Nango. Token in `Authorization: Bearer <access_token>`. Refresh handled by Nango.
+- **Auth:** OAuth2 user flow handled by the Holaboss broker. The module never sees `Authorization: Bearer <access_token>` — the broker injects it server-side. Refresh is also broker-managed.
 - **Rate limits:** 100 req / 10 sec per access token (Standard tier). Surface 429 as `rate_limited`. Burst limits also exist.
 - **Pagination:** Cursor via `paging.next.after`. Pass back as `after` on next call. Return `next_cursor: string | null`.
 - **Properties (CRITICAL):** HubSpot CRM objects have dynamic properties per portal — every customer has different custom fields. Tools that create/update objects MUST be paired with a `_describe_schema` lookup, just like Attio.
@@ -278,10 +278,10 @@ inputSchema: {
 
 ## 6. Auth bootstrap
 
-Standard pattern. Header: `Authorization: Bearer <access_token>` (Nango handles refresh).
+Standard pattern via `createIntegrationClient("hubspot").proxy(...)`. The broker injects `Authorization: Bearer ...` and handles refresh.
 
 Status mapping:
-- 401 → `not_connected` (also signal Nango to refresh)
+- 401 → `not_connected` (the broker will refresh on its own next time the proxy is hit)
 - 403 → `not_connected` with message "scope missing: <required_scope>" (parse from response body if available)
 - 400/409/422 → `validation_failed`
 - 429 → `rate_limited` with `retry_after`
@@ -356,7 +356,7 @@ Target: 16–20 tests (largest module → larger test set).
 
 ## 10. Open questions for human review
 
-- [ ] **OAuth scopes** — confirm the Nango HubSpot connector requests at minimum: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.companies.read`, `crm.objects.deals.read`, `crm.objects.deals.write`, `crm.schemas.contacts.read`, `crm.schemas.deals.read`, plus engagement scopes for notes/tasks. Some scopes are paid-tier-gated.
+- [ ] **OAuth scopes** — confirm the Holaboss broker's HubSpot connector requests at minimum: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.companies.read`, `crm.objects.deals.read`, `crm.objects.deals.write`, `crm.schemas.contacts.read`, `crm.schemas.deals.read`, plus engagement scopes for notes/tasks. Some scopes are paid-tier-gated.
 - [ ] **Should v1 expose tickets / engagements other than note+task?** I argue defer — Service Hub is a separate use case.
 - [ ] **HubSpot Portal id** — is it returned by `/oauth/access-tokens/:token/info`, or do we have to derive it from a contact's URL? Need it for deep links.
 - [ ] **Search filter operators** — confirm `BETWEEN` accepts `value` + `highValue` or `values: [low, high]`. Subagent verifies on day 1.
