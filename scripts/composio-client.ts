@@ -64,16 +64,33 @@ async function readBody(r: Response): Promise<string> {
   return text
 }
 
-async function listManagedAuthConfigs(
+/** Sentinel error thrown when Composio doesn't have managed auth for a toolkit. */
+export class ManagedAuthNotAvailableError extends Error {
+  readonly toolkitSlug: string
+  constructor(toolkitSlug: string, raw: string) {
+    super(
+      `Composio does not have managed auth for "${toolkitSlug}". ` +
+        `Pass custom credentials (api_key for API-key toolkits, client_id+client_secret for OAuth). ` +
+        `Original Composio response: ${raw.slice(0, 300)}`,
+    )
+    this.toolkitSlug = toolkitSlug
+    this.name = "ManagedAuthNotAvailableError"
+  }
+}
+
+function isManagedNotAvailable(raw: string): boolean {
+  // Composio surfaces this with code 306 / slug Auth_Config_DefaultAuthConfigNotFound.
+  return /Auth_Config_DefaultAuthConfigNotFound/i.test(raw) ||
+    /Default auth config not found for toolkit/i.test(raw)
+}
+
+async function listAuthConfigs(
   apiKey: string,
   toolkitSlug: string,
   baseUrl?: string,
 ): Promise<AuthConfigItem[]> {
-  const q = new URLSearchParams({
-    toolkit_slug: toolkitSlug,
-    is_composio_managed: "true",
-    show_disabled: "false",
-  })
+  // List ALL auth configs for the toolkit (managed + custom). Filtering happens client-side.
+  const q = new URLSearchParams({ toolkit_slug: toolkitSlug, show_disabled: "false" })
   const r = await fetch(`${trimBase(baseUrl)}/api/v3/auth_configs?${q.toString()}`, {
     headers: headers(apiKey),
   })
@@ -82,42 +99,65 @@ async function listManagedAuthConfigs(
   return payload.items ?? []
 }
 
-async function createManagedAuthConfig(
+async function createAuthConfig(
   apiKey: string,
   toolkitSlug: string,
+  customCredentials: Record<string, unknown> | undefined,
   baseUrl?: string,
 ): Promise<string> {
+  const authConfig = customCredentials
+    ? { type: "use_custom_auth" as const, credentials: customCredentials }
+    : { type: "use_composio_managed_auth" as const }
+
   const r = await fetch(`${trimBase(baseUrl)}/api/v3/auth_configs`, {
     method: "POST",
     headers: headers(apiKey),
-    body: JSON.stringify({
-      toolkit: { slug: toolkitSlug },
-      auth_config: { type: "use_composio_managed_auth" },
-    }),
+    body: JSON.stringify({ toolkit: { slug: toolkitSlug }, auth_config: authConfig }),
   })
-  const text = await readBody(r)
+  if (!r.ok) {
+    const text = await r.text()
+    if (!customCredentials && isManagedNotAvailable(text)) {
+      throw new ManagedAuthNotAvailableError(toolkitSlug, text)
+    }
+    throw new Error(`Composio ${r.status}: ${text.slice(0, 500)}`)
+  }
+  const text = await r.text()
   const payload = JSON.parse(text) as { id?: string; auth_config?: { id?: string } }
   return required(payload.id ?? payload.auth_config?.id ?? "", "authConfigId")
 }
 
+/**
+ * Bootstrap a Composio connect link. Tries this order:
+ *   1. Reuse the first ENABLED auth_config for the toolkit (managed or custom).
+ *   2. Otherwise create a new auth_config:
+ *      - If `customCredentials` provided → `use_custom_auth` with those creds.
+ *      - Else → `use_composio_managed_auth`. If Composio doesn't have managed
+ *        auth for this toolkit, throws `ManagedAuthNotAvailableError`.
+ *
+ * customCredentials shape is toolkit-dependent. Common shapes:
+ *   - API-key toolkits (apollo, instantly):  { api_key: "..." }
+ *   - OAuth toolkits (hubspot when not managed):  { client_id, client_secret }
+ *   - ZoomInfo:  { username, password }  OR  { username, clientId, privateKey }
+ */
 export async function createManagedConnectLink(params: {
   apiKey: string
   toolkitSlug: string
   userId: string
   callbackUrl?: string
   baseUrl?: string
+  customCredentials?: Record<string, unknown>
 }): Promise<ManagedConnectLinkResult> {
   const toolkitSlug = required(params.toolkitSlug, "toolkitSlug")
   const userId = required(params.userId, "userId")
-  const configs = await listManagedAuthConfigs(params.apiKey, toolkitSlug, params.baseUrl)
+  const configs = await listAuthConfigs(params.apiKey, toolkitSlug, params.baseUrl)
   const existing = configs.find(
     (c) =>
       c.status?.toUpperCase() === "ENABLED" &&
-      c.is_composio_managed === true &&
       c.toolkit?.slug?.toLowerCase() === toolkitSlug.toLowerCase(),
   )
   const authConfigId =
-    existing?.id ?? (await createManagedAuthConfig(params.apiKey, toolkitSlug, params.baseUrl))
+    existing?.id ??
+    (await createAuthConfig(params.apiKey, toolkitSlug, params.customCredentials, params.baseUrl))
 
   const r = await fetch(`${trimBase(params.baseUrl)}/api/v3/connected_accounts/link`, {
     method: "POST",

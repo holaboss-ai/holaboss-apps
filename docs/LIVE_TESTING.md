@@ -47,6 +47,46 @@ If the slug differs, Composio will tell you in the API error.
 Visit `http://localhost:3099/` in a browser to see which providers the broker
 currently has connections for.
 
+### Custom auth (API-key / OAuth-app toolkits)
+
+Composio holds OAuth credentials for popular consumer toolkits like Gmail and
+GitHub — those connect with no extra flags. **B2B toolkits** (Apollo,
+ZoomInfo, Instantly, Attio, Cal.com, sometimes HubSpot) need YOU to provide
+credentials, because Composio can't manage them centrally. The CLI surfaces
+this as:
+
+> `Composio does not have managed auth for "apollo". Pass custom credentials
+> (api_key for API-key toolkits, client_id+client_secret for OAuth).`
+
+Re-run with the right flag for that toolkit:
+
+```bash
+# API-key toolkits (apollo / instantly / attio / calcom):
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect apollo --api-key apollo_xxx
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect instantly --api-key inst_xxx
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect attio --api-key attio_xxx
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect calcom --api-key cal_xxx
+
+# OAuth-with-your-own-app (some HubSpot setups):
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect hubspot \
+  --oauth-client-id <hub_client_id> --oauth-client-secret <hub_secret>
+
+# Anything else — pass full credentials JSON inline or via @file:
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect zoominfo \
+  --credentials-json '{"username":"u","password":"p"}'
+
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect zoominfo \
+  --credentials-json '{"username":"u","clientId":"c","privateKey":"<pem>"}'
+
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect somethingExotic \
+  --credentials-json @./creds.json
+```
+
+The credentials are sent ONCE to Composio at auth-config-creation time and
+stored on Composio's side — they're never persisted in this repo. Subsequent
+`composio:connect` runs for the same toolkit reuse the existing auth_config
+without re-prompting.
+
 ## Run
 
 ```bash
