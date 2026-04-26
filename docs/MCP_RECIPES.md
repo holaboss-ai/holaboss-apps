@@ -211,6 +211,129 @@ Watch out:
 
 ---
 
+## Apollo
+
+### Find decision-makers and add to outbound sequence
+
+User intent: "Find 20 VPs of Engineering at Series-B SaaS companies in California and add them to my 'Q2 Outbound — Eng Leaders' sequence."
+Modules touched: apollo.
+
+Steps:
+1. `apollo_get_connection_status({})` — verify connected and confirm `is_master_key` (sequence writes require master key).
+2. `apollo_search_people({ person_titles: ['VP Engineering'], person_seniorities: ['vp'], organization_num_employees_ranges: ['51,200','201,500'], person_locations: ['California, US'], per_page: 25 })` — returns people without email.
+3. `apollo_list_sequences({})` — let the user pick the right sequence by name.
+4. `apollo_add_to_sequence({ sequence_id, contact_ids: [<from step 2>] })` — bulk-add up to 100 contact ids; idempotent.
+
+Watch out:
+- Search returns NO email by default — use `apollo_enrich_person` only when the user actually needs to contact someone.
+- Sequence writes return 403 → `not_connected` if the workspace's API key is non-master. Surface that to the user verbatim.
+
+### Enrich a name + domain into an email and enroll
+
+User intent: "Find Jane Smith's email at Acme and add her to the 'Founder Intro' sequence."
+Steps:
+1. `apollo_enrich_person({ first_name: 'Jane', last_name: 'Smith', organization_domain: 'acme.com' })` — **consumes credits**; warn the user before fanning out across many people.
+2. `apollo_list_sequences({})` → pick.
+3. `apollo_add_to_sequence({ sequence_id, contact_ids: [<id from step 1>] })`.
+
+Watch out:
+- Speculative `_enrich_person` calls drain credits fast. One enrichment per intent, not one per search hit.
+
+---
+
+## ZoomInfo
+
+### C-suite outbound from intent signal
+
+User intent: "Find me hot accounts researching CRM software and pull their CMOs into HubSpot."
+Modules touched: zoominfo, hubspot (or attio).
+
+Steps:
+1. `zoominfo_get_connection_status({})`.
+2. `zoominfo_get_intent({ topics: ['CRM','Marketing Automation'] })` — keep companies with score > 70.
+3. For each hot company: `zoominfo_get_org_chart({ company_id, levels: ['c_level','vp_level'] })` — find the CMO / VP Marketing.
+4. `zoominfo_enrich_contact({ contact_id })` — get email + phone.
+5. `hubspot_create_contact({ properties: { email, firstname, lastname, jobtitle, lifecyclestage: 'lead' } })` (or `attio_create_person({ attributes })`) — push the enriched record into the user's CRM.
+
+Watch out:
+- ZoomInfo data is licensed — only use to populate the user's own CRM, never export.
+- `_enrich_contact` consumes credits. Prefer `_search_contacts` first to confirm the person exists before enriching.
+
+---
+
+## Instantly
+
+### Apollo → Instantly: source leads and push to outreach
+
+User intent: "Take the prospects I just found in Apollo and add them to my Instantly cold campaign."
+Modules touched: apollo, instantly.
+
+Steps:
+1. `apollo_search_people({...})` → list of prospects.
+2. `apollo_enrich_person({ ... })` (per prospect) — get verified emails.
+3. `instantly_list_campaigns({ status: 'active' })` → confirm target campaign id.
+4. `instantly_add_lead_to_campaign({ campaign_id, leads: [{ email, first_name, last_name, company_name }, ...] })` — bulk-add up to 100 per call.
+
+Watch out:
+- Instantly enforces unique emails per campaign — re-adding the same email returns `skipped_count`, NOT an error.
+- Don't add to a campaign in `'completed'` state — the call returns `{ code: 'invalid_state' }`.
+
+### Pause → review bounces → clean up → resume
+
+User intent: "My campaign's bouncing too much — pause it, drop the bad addresses, then start it back up."
+Steps:
+1. `instantly_list_campaigns({ status: 'active' })` → find the campaign.
+2. `instantly_pause_campaign({ campaign_id })` — idempotent; safe to call even if already paused.
+3. `instantly_list_leads({ campaign_id, status: 'bounced' })` → get the dirty `lead_id`s.
+4. `instantly_remove_lead_from_campaign({ campaign_id, lead_id })` — loop. Idempotent.
+5. `instantly_resume_campaign({ campaign_id })` — sends restart on the next scheduled window.
+
+Watch out:
+- Pausing doesn't cancel in-flight sends already handed to mailbox — surface that latency to the user.
+
+---
+
+## HubSpot
+
+### Re-engage stale opportunities
+
+User intent: "Find every contact whose lifecycle is 'opportunity' and was last contacted over 30 days ago, and create a re-engagement task for each."
+Steps:
+1. `hubspot_describe_schema({ object_type: 'contacts' })` — confirm property slugs (`lifecyclestage`, `notes_last_contacted`).
+2. `hubspot_search_contacts({ filters: [{ property: 'lifecyclestage', operator: 'EQ', value: 'opportunity' }, { property: 'notes_last_contacted', operator: 'LT', value: <ISO 30d ago> }], properties: ['email','firstname','lastname'], limit: 100 })`.
+3. For each contact: `hubspot_create_task({ subject: 'Re-engage <name>', due_date: <T+3d>, linked_records: [{ object_type: 'contacts', record_id }] })`.
+
+Watch out:
+- Always call `_describe_schema` first — `lifecyclestage` values are portal-specific (some portals customize the enum).
+- 100 task creates back-to-back can hit the 100 req / 10 sec limit; surface `rate_limited` and back off.
+
+### Add new lead → company → put in pipeline stage
+
+User intent: "Alice from Acme just signed up — add her, link to Acme, and put her in 'New Business / Discovery'."
+Steps:
+1. `hubspot_search_contacts({ query: 'alice@acme.com' })` — confirm she's not already there.
+2. `hubspot_search_companies({ query: 'acme.com' })` — find the company id.
+3. `hubspot_create_contact({ properties: { email, firstname: 'Alice', lastname }, associations: [{ to_object_type: 'companies', to_object_id: <company_id> }] })`.
+4. `hubspot_list_pipelines({})` — get pipeline_id + stage_id for "New Business / Discovery".
+5. `hubspot_create_deal({ properties: { dealname, pipeline: <pipeline_id>, dealstage: <stage_id>, amount? }, associations: [{ to_object_type: 'contacts', to_object_id: <contact_id> }, { to_object_type: 'companies', to_object_id: <company_id> }] })`.
+
+Watch out:
+- HubSpot dedupes contacts on email — passing an already-used email returns `validation_failed`, not a silent overwrite.
+- pipeline_id and stage_id are portal-specific. Never hardcode.
+
+### Move deal forward + log a note
+
+User intent: "Move Acme's deal to 'Proposal' and log that we discussed pricing."
+Steps:
+1. `hubspot_list_pipelines({})` — get target stage_id.
+2. `hubspot_update_deal_stage({ deal_id, stage_id })`.
+3. `hubspot_add_note({ parent_object: 'deals', parent_record_id: deal_id, content: 'Stage change: discussed pricing — moved to Proposal' })`.
+
+Watch out:
+- `_update_deal_stage` returns `validation_failed` if `stage_id` doesn't belong to the deal's pipeline. Always re-check via `_list_pipelines` if you're not sure which pipeline the deal lives in.
+
+---
+
 ## Cross-module recipes
 
 ### Email follow-up + CRM update + Slack-able summary

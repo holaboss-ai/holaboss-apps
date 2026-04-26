@@ -1,0 +1,42 @@
+app_id: "hubspot-module"
+name: "HubSpot CRM"
+slug: "hubspot"
+
+lifecycle:
+  setup: "corepack enable && pnpm install && pnpm run build && pnpm prune --prod"
+  start: "DB_PATH=./data/hubspot.db nohup node .output/server/index.mjs > /tmp/hubspot-module.log 2>&1 & DB_PATH=./data/hubspot.db nohup node .output/start-services.cjs > /tmp/hubspot-module-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp
+  tools:
+    - "hubspot_get_connection_status"
+    - "hubspot_describe_schema"
+    - "hubspot_search_contacts"
+    - "hubspot_get_contact"
+    - "hubspot_create_contact"
+    - "hubspot_update_contact"
+    - "hubspot_search_companies"
+    - "hubspot_list_pipelines"
+    - "hubspot_create_deal"
+    - "hubspot_update_deal_stage"
+    - "hubspot_add_note"
+    - "hubspot_create_task"
+
+integration:
+  destination: "hubspot"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_APP_GRANT"
+  - "HOLABOSS_INTEGRATION_BROKER_URL"
+  - "HOLABOSS_FRONTEND_URL"

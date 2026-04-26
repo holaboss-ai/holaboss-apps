@@ -17,8 +17,12 @@ hola-boss-apps/
 ├── sheets/           # Google Sheets — CRUD over rows + cells, contact-output sync
 ├── calcom/           # Cal.com — event types, bookings, availability, reschedule/cancel
 ├── attio/            # Attio CRM — people / companies / lists / notes / tasks
+├── apollo/           # Apollo.io — prospecting (people/orgs), enrichment, sequence orchestration
+├── zoominfo/         # ZoomInfo — B2B contact + company intelligence (read-only, licensed data)
+├── instantly/        # Instantly — cold email campaigns + leads + idempotent pause/resume + test sends
+├── hubspot/          # HubSpot CRM — contacts / companies / deals + pipelines + notes / tasks
 ├── create-hola-app/  # Scaffolding CLI for new modules
-├── docs/             # Cross-module docs (e.g. MCP_TOOL_DESCRIPTION_CONVENTION.md)
+├── docs/             # Cross-module docs (convention, recipes, plans, dev guide)
 └── scripts/          # Dev / deploy helpers
 ```
 
@@ -80,6 +84,10 @@ src/
 | Sheets    | (Google as source)     | sheet/row/cell                                            | publishes contact outputs          |
 | Cal.com   | `bookings`, `event_types` | `start_time`, `end_time`, `attendees`                  | wraps Cal.com v2 API               |
 | Attio     | `people`/`companies`/`deals` (Attio as source) | dynamic via `describe_schema`            | upsert via `add_to_list`           |
+| Apollo    | (Apollo as source)     | people / organizations / emailer_campaigns                | sequence add/remove requires Apollo master API key |
+| ZoomInfo  | (ZoomInfo as source)   | contacts / companies / intent / org_chart                 | data licensed; populate user's own CRM only; in-process JWT cache |
+| Instantly | (Instantly as source)  | campaigns / leads / stats                                 | wraps Instantly v2 API             |
+| HubSpot   | (HubSpot as source)    | contacts / companies / deals (dynamic via `describe_schema`) | wraps HubSpot CRM v3 API; pipelines + stages enforced |
 
 ### Publishing module state machine (twitter / linkedin / reddit)
 
