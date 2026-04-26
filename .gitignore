@@ -4,3 +4,4 @@ dist
 data
 .DS_Store
 .env
+.composio-connections.json
