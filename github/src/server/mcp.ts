@@ -13,12 +13,25 @@ import {
 } from "./github-api"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
 function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
 }
 
-function err(message: string) {
-  return { content: [{ type: "text" as const, text: message }], isError: true }
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+
+function upstreamErr(message: string, e: unknown) {
+  return errCode("upstream_error", `${message}: ${e instanceof Error ? e.message : String(e)}`)
 }
 
 function createMcpServer(): McpServer {
@@ -56,7 +69,7 @@ Errors: "Failed to list repos: <gh error>" if username is invalid or rate-limite
         const repos = await listUserRepos(username, limit ?? 10)
         return text(repos)
       } catch (e) {
-        return err(`Failed to list repos: ${e instanceof Error ? e.message : String(e)}`)
+        return upstreamErr("Failed to list repos", e)
       }
     },
   )
@@ -88,7 +101,7 @@ Returns: { commits: [{ sha, author, message, date }], pull_requests: [{ number, 
         const activity = await listRecentActivity(owner, repo, days ?? 7)
         return text(activity)
       } catch (e) {
-        return err(`Failed to get activity: ${e instanceof Error ? e.message : String(e)}`)
+        return upstreamErr("Failed to get activity", e)
       }
     },
   )
@@ -118,10 +131,10 @@ Errors: 'Commit not found' if sha doesn't exist in repo. "Failed to get commit: 
     async ({ owner, repo, sha }) => {
       try {
         const commit = await getCommit(owner, repo, sha)
-        if (!commit) return err("Commit not found")
+        if (!commit) return errCode("not_found", "Commit not found")
         return text(commit)
       } catch (e) {
-        return err(`Failed to get commit: ${e instanceof Error ? e.message : String(e)}`)
+        return upstreamErr("Failed to get commit", e)
       }
     },
   )
@@ -151,10 +164,10 @@ Errors: 'Pull request not found' if number doesn't exist. "Failed to get PR: <gh
     async ({ owner, repo, number }) => {
       try {
         const pr = await getPullRequest(owner, repo, number)
-        if (!pr) return err("Pull request not found")
+        if (!pr) return errCode("not_found", "Pull request not found")
         return text(pr)
       } catch (e) {
-        return err(`Failed to get PR: ${e instanceof Error ? e.message : String(e)}`)
+        return upstreamErr("Failed to get PR", e)
       }
     },
   )
@@ -186,7 +199,7 @@ Errors: "Failed to list releases: <gh error>" for API failures.`,
         const releases = await listReleases(owner, repo, limit ?? 5)
         return text(releases)
       } catch (e) {
-        return err(`Failed to list releases: ${e instanceof Error ? e.message : String(e)}`)
+        return upstreamErr("Failed to list releases", e)
       }
     },
   )

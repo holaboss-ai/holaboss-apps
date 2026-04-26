@@ -104,7 +104,58 @@ The agent uses these to decide retry / preview / consent behavior. Don't rely on
 
 Return `{ content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] }`. Don't add `outputSchema` yet — that's a separate migration. The "Returns:" line in the description is what the agent uses to predict the shape.
 
-For errors: `{ content: [{ type: "text", text: <message> }], isError: true }`. The message should match a recognizable shape mentioned in the description's "Errors:" line.
+### Errors — structured envelope (mandatory)
+
+Every error MUST be a JSON object with `code` and `message`, encoded as `text` and flagged with `isError: true`:
+
+```ts
+{
+  content: [{ type: "text", text: JSON.stringify({ code, message, ...extra }) }],
+  isError: true,
+}
+```
+
+Use the `errCode(code, message, extra?)` helper defined inline at the top of each module's `mcp.ts` / `tools.ts`. (No shared package — copy the helper.)
+
+#### Canonical error codes
+
+| Code                | Meaning                                                                 | Example                                            |
+|---------------------|-------------------------------------------------------------------------|----------------------------------------------------|
+| `not_found`         | Entity referenced by id doesn't exist in this module's store.           | `twitter_get_post` with unknown post_id.           |
+| `invalid_state`     | Entity exists but its current state forbids this operation.             | `twitter_cancel_publish` on a `'draft'` post.      |
+| `validation_failed` | Input shape is OK but the value violates a constraint or external rule. | content over the platform char limit.              |
+| `not_connected`     | The third-party integration isn't linked for this workspace.            | calling Cal.com tool before user connects Cal.com. |
+| `rate_limited`      | Third-party API returned a rate-limit. Include `retry_after` (seconds). | GitHub 403 secondary rate limit.                   |
+| `upstream_error`    | Third-party API returned an error we don't categorize further.          | unexpected 5xx from Gmail.                         |
+| `internal`          | Bug in this module — caught exception with no specific cause.           | unexpected throw from a SQL prepare.               |
+
+The agent uses these codes to decide retry / ask-user / abort. **Never invent new codes** — extend the canonical list (and update this table) instead.
+
+#### `errCode` helper
+
+```ts
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }],
+    isError: true as const,
+  }
+}
+```
+
+The handler picks the right code and writes a short, user-actionable `message`. Don't put stack traces in `message` — those go to the module's logger.
+
+#### When you add `outputSchema` later
+
+Once a tool has `outputSchema`, ALSO return `structuredContent: { code, message, ...extra }` alongside the text — the SDK requires it for typed errors. Until then, the JSON-in-text shape is what the agent parses.
 
 ## 7. What does NOT go in the description
 

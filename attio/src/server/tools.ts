@@ -453,6 +453,14 @@ export async function addToListImpl(
 }
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+const asText = (result: Result<unknown, AttioError>) => {
+  if (result.ok) {
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
+  }
+  // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
+  return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
+}
+
 export function registerTools(server: McpServer): void {
   const findPeople = wrapTool("attio_find_people", findPeopleImpl)
   const getPerson = wrapTool("attio_get_person", getPersonImpl)
@@ -489,10 +497,7 @@ Returns: { objects: [{ api_slug, name, attributes: [{ api_slug, type, is_require
         openWorldHint: true,
       },
     },
-    async ({ objects }) => {
-      const r = await describeSchemaImpl({ objects })
-      return { content: [{ type: "text" as const, text: JSON.stringify(r) }] }
-    },
+    async ({ objects }) => asText(await describeSchemaImpl({ objects })),
   )
 
   server.registerTool(
@@ -512,10 +517,7 @@ Returns: { connected: true, workspace_name } if linked, { connected: false } oth
         openWorldHint: true,
       },
     },
-    async () => {
-      const r = await getConnectionStatusImpl({})
-      return { content: [{ type: "text" as const, text: JSON.stringify(r) }] }
-    },
+    async () => asText(await getConnectionStatusImpl({})),
   )
 
   server.registerTool(
@@ -540,7 +542,7 @@ Returns: array of person records, each with record_id and attribute values.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await findPeople(args)) }] }),
+    async (args) => asText(await findPeople(args)),
   )
 
   server.registerTool(
@@ -562,7 +564,7 @@ Returns: full person record with attribute slugs as keys.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await getPerson(args)) }] }),
+    async (args) => asText(await getPerson(args)),
   )
 
   server.registerTool(
@@ -590,7 +592,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload — 
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createPerson(args)) }] }),
+    async (args) => asText(await createPerson(args)),
   )
 
   server.registerTool(
@@ -618,7 +620,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await updatePerson(args)) }] }),
+    async (args) => asText(await updatePerson(args)),
   )
 
   server.registerTool(
@@ -643,7 +645,7 @@ Returns: array of company records, each with record_id and attribute values.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await findCompanies(args)) }] }),
+    async (args) => asText(await findCompanies(args)),
   )
 
   server.registerTool(
@@ -671,7 +673,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createCompany(args)) }] }),
+    async (args) => asText(await createCompany(args)),
   )
 
   server.registerTool(
@@ -695,7 +697,7 @@ Returns: updated person record showing the new company link.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await linkPersonToCompany(args)) }] }),
+    async (args) => asText(await linkPersonToCompany(args)),
   )
 
   server.registerTool(
@@ -723,7 +725,7 @@ Returns: { note_id, ... } of the created note.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await addNote(args)) }] }),
+    async (args) => asText(await addNote(args)),
   )
 
   server.registerTool(
@@ -761,7 +763,7 @@ Returns: { task_id, ... } of the created task.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createTask(args)) }] }),
+    async (args) => asText(await createTask(args)),
   )
 
   server.registerTool(
@@ -794,7 +796,7 @@ Returns: array of tasks with content, deadline_at, status, assignee, linked_reco
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await listTasks(args)) }] }),
+    async (args) => asText(await listTasks(args)),
   )
 
   server.registerTool(
@@ -817,7 +819,7 @@ Returns: array of { entry_id, parent_record_id, parent_object, entry_values: { s
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await listRecordsInList(args)) }] }),
+    async (args) => asText(await listRecordsInList(args)),
   )
 
   server.registerTool(
@@ -852,6 +854,6 @@ Returns: { entry_id, parent_record_id, ... }.`,
         openWorldHint: true,
       },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await addToList(args)) }] }),
+    async (args) => asText(await addToList(args)),
   )
 }

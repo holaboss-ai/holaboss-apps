@@ -19,12 +19,25 @@ import {
 import { contactRef, publishContactRowOutput } from "./app-outputs"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
 function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
 }
 
-function err(message: string) {
-  return { content: [{ type: "text" as const, text: message }], isError: true }
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+
+function upstreamErr(e: unknown) {
+  return errCode("upstream_error", e instanceof Error ? e.message : String(e))
 }
 
 function findEmailColumnIndex(headers: string[]): number {
@@ -71,7 +84,7 @@ Returns: { title, headers: string[], rowCount }.`,
         const info = await getSheetInfo(sheet_id)
         return text(info)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -107,7 +120,7 @@ Returns: { created: true, spreadsheet_id, title, headers }. Use spreadsheet_id w
         const spreadsheetId = await createSpreadsheet(title, headers, rows ?? [])
         return text({ created: true, spreadsheet_id: spreadsheetId, title, headers })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -139,7 +152,7 @@ Returns: array of { id, name, modified_at }.`,
         const sheets = await listSpreadsheets(query)
         return text(sheets)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -186,7 +199,7 @@ Returns: array of { rowNumber, values: { <header>: string } }. rowNumber is 1-in
         }
         return text(rows)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -218,7 +231,7 @@ Returns: 2D array of strings, e.g. [['Alice', 'a@b.com'], ['Bob', 'b@c.com']].`,
         const data = await readRange(sheet_id, range)
         return text(data)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -283,7 +296,7 @@ Returns: { updated: true, range, value, output_id? }.`,
 
         return text(result)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -352,7 +365,7 @@ Returns: { appended: true, values, output_id? }.`,
 
         return text(result)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -429,7 +442,7 @@ Returns: { updated: true, row_number, values, output_id? }.`,
 
         return text(result)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -467,7 +480,7 @@ Returns: { deleted: true, row_number }.`,
         await deleteRow(sheet_id, range ?? "Sheet1", row_number)
         return text({ deleted: true, row_number })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -497,7 +510,7 @@ Returns: { added: true, sheet_id, title, ... } where sheet_id is the new tab's i
         const result = await addSheet(sheet_id, title)
         return text({ added: true, ...result })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )

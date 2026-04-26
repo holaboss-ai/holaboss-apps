@@ -15,8 +15,19 @@ import {
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
-function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
 
 async function syncAndPersist(
   db: ReturnType<typeof getDb>,
@@ -76,7 +87,7 @@ Sibling: pass scheduled_at here (or via linkedin_update_post) to defer publishin
         const synced = await syncAndPersist(db, post, extra.requestInfo?.headers)
         return text(synced)
       } catch (error) {
-        return err(error instanceof Error ? error.message : String(error))
+        return errCode("internal", error instanceof Error ? error.message : String(error))
       }
     },
   )
@@ -110,7 +121,7 @@ Errors: 'Post not found' if post_id doesn't exist.`,
     async ({ post_id, content, scheduled_at }, extra) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
-      if (!post) return err("Post not found")
+      if (!post) return errCode("not_found", "Post not found")
 
       const updates: string[] = ["updated_at = datetime('now')"]
       const params: unknown[] = []
@@ -186,7 +197,7 @@ Errors: 'Post not found' if post_id is unknown.`,
     async ({ post_id }) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id)
-      if (!post) return err("Post not found")
+      if (!post) return errCode("not_found", "Post not found")
       return text(post)
     },
   )
@@ -216,7 +227,7 @@ Errors: 'Post not found'. NOTE: re-calling on an already-queued post creates a d
     async ({ post_id }, extra) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
-      if (!post) return err("Post not found")
+      if (!post) return errCode("not_found", "Post not found")
 
       const userId = process.env.HOLABOSS_USER_ID ?? ""
       const jobId = await enqueuePublish({
@@ -259,7 +270,7 @@ Errors: 'Post not found'.`,
       const post = db
         .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
         .get(post_id)
-      if (!post) return err("Post not found")
+      if (!post) return errCode("not_found", "Post not found")
       return text(post)
     },
   )
@@ -288,9 +299,9 @@ Errors: 'Post not found', or "Cannot cancel post in '<state>' state".`,
     async ({ post_id }, extra) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
-      if (!post) return err("Post not found")
+      if (!post) return errCode("not_found", "Post not found")
       if (post.status !== "scheduled" && post.status !== "queued") {
-        return err(`Cannot cancel post in '${post.status}' state`)
+        return errCode("invalid_state", `Cannot cancel post in '${post.status}' state`, { current_status: post.status, allowed_from: ["queued", "scheduled"] })
       }
       db.prepare("UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
       const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
@@ -323,9 +334,9 @@ Errors: 'Post not found', "Cannot delete post in 'queued/scheduled' state. Cance
     async ({ post_id }) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
-      if (!post) return err("Post not found")
-      if (post.status === "queued" || post.status === "scheduled") return err(`Cannot delete post in '${post.status}' state. Cancel it first.`)
-      if (post.status === "published") return err("Cannot delete a published post")
+      if (!post) return errCode("not_found", "Post not found")
+      if (post.status === "queued" || post.status === "scheduled") return errCode("invalid_state", `Cannot delete post in '${post.status}' state. Cancel it first.`, { current_status: post.status, hint: "call linkedin_cancel_publish first" })
+      if (post.status === "published") return errCode("invalid_state", "Cannot delete a published post", { current_status: "published" })
       db.prepare("DELETE FROM posts WHERE id = ?").run(post_id)
       if (post.output_id) {
         try {

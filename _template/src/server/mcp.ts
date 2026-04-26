@@ -13,6 +13,20 @@ import { enqueuePublish, getQueueStats } from "./queue"
 // Spec: ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 // When you copy this template, also rewrite each description for your module.
 // TODO: Replace "module" prefix in every tool name with your module name (e.g. "linkedin", "crm").
+
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+
 function createMcpServer(): McpServer {
   const server = new McpServer({
     name: `${MODULE_CONFIG.name} Module`,
@@ -118,7 +132,7 @@ Errors: isError=true with 'Post not found' if post_id is unknown.`,
     async ({ post_id }) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id)
-      if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
+      if (!post) return errCode("not_found", "Post not found")
       return { content: [{ type: "text" as const, text: JSON.stringify(post) }] }
     },
   )
@@ -148,7 +162,7 @@ Errors: 'Post not found'. NOTE: re-publishing an already-queued post creates a d
     async ({ post_id }) => {
       const db = getDb()
       const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
-      if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
+      if (!post) return errCode("not_found", "Post not found")
 
       const userId = process.env.HOLABOSS_USER_ID ?? ""
       const jobId = await enqueuePublish({
@@ -189,7 +203,7 @@ Errors: 'Post not found'.`,
       const post = db
         .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
         .get(post_id)
-      if (!post) return { content: [{ type: "text" as const, text: "Post not found" }], isError: true }
+      if (!post) return errCode("not_found", "Post not found")
       return { content: [{ type: "text" as const, text: JSON.stringify(post) }] }
     },
   )

@@ -13,8 +13,22 @@ import { enqueueSend } from "./queue"
 import { resolveHolabossTurnContext } from "./holaboss-bridge"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+type ErrorCode =
+  | "not_found"
+  | "invalid_state"
+  | "validation_failed"
+  | "not_connected"
+  | "rate_limited"
+  | "upstream_error"
+  | "internal"
+
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
-function err(message: string) { return { content: [{ type: "text" as const, text: message }], isError: true } }
+function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+function upstreamErr(e: unknown) {
+  return errCode("upstream_error", e instanceof Error ? e.message : String(e))
+}
 
 function extractEmailAddress(value: string): string {
   const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
@@ -72,7 +86,7 @@ Returns: array of thread snippets — { id, snippet, lastMessageDate, ... }.`,
         const threads = await listThreads(query, max_results ?? 10)
         return text(threads)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -103,7 +117,7 @@ Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }]
         const messages = thread.messages.map(parseMessage)
         return text({ id: thread.id, messages })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -166,7 +180,7 @@ Returns: { id, subject, primary_email, output_id, messages }.`,
           messages,
         })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -229,7 +243,7 @@ Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, s
         }
         return text(draft)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -261,8 +275,8 @@ Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
       try {
         const db = getDb()
         const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-        if (!draft) return err("Draft not found")
-        if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be sent (status: ${draft.status})`)
+        if (!draft) return errCode("not_found", "Draft not found")
+        if (draft.status !== "pending" && draft.status !== "failed") return errCode("invalid_state", `Draft cannot be sent (status: ${draft.status})`, { current_status: draft.status, allowed_from: ["pending", "failed"] })
 
         const holabossUserId = process.env.HOLABOSS_USER_ID ?? ""
         const jobId = enqueueSend({
@@ -285,7 +299,7 @@ Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
           status: "queued",
         })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -319,8 +333,8 @@ Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
       try {
         const db = getDb()
         const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-        if (!draft) return err("Draft not found")
-        if (draft.status !== "pending" && draft.status !== "failed") return err(`Draft cannot be edited (status: ${draft.status})`)
+        if (!draft) return errCode("not_found", "Draft not found")
+        if (draft.status !== "pending" && draft.status !== "failed") return errCode("invalid_state", `Draft cannot be edited (status: ${draft.status})`, { current_status: draft.status, allowed_from: ["pending", "failed"] })
 
         db.prepare(`
           UPDATE drafts SET
@@ -342,7 +356,7 @@ Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
         }
         return text(updated)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -372,7 +386,7 @@ Errors: 'Draft not found'.`,
       try {
         const db = getDb()
         const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-        if (!draft) return err("Draft not found")
+        if (!draft) return errCode("not_found", "Draft not found")
         return text({
           draft_id,
           status: draft.status,
@@ -381,7 +395,7 @@ Errors: 'Draft not found'.`,
           updated_at: draft.updated_at,
         })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -411,13 +425,13 @@ Errors: 'Draft not found', 'Cannot delete a draft that is currently being sent',
       try {
         const db = getDb()
         const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
-        if (!draft) return err("Draft not found")
-        if (draft.status === "queued") return err("Cannot delete a draft that is currently being sent")
-        if (draft.status === "sent") return err("Cannot delete a sent email")
+        if (!draft) return errCode("not_found", "Draft not found")
+        if (draft.status === "queued") return errCode("invalid_state", "Cannot delete a draft that is currently being sent", { current_status: "queued" })
+        if (draft.status === "sent") return errCode("invalid_state", "Cannot delete a sent email", { current_status: "sent" })
         db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
         return text({ deleted: true, draft_id })
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )
@@ -457,7 +471,7 @@ Returns: array of DraftRecord. Empty array if none match.`,
         }
         return text(rows)
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e))
+        return upstreamErr(e)
       }
     },
   )

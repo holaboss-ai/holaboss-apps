@@ -271,7 +271,8 @@ export function registerTools(server: McpServer): void {
     if (result.ok) {
       return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
     }
-    return { content: [{ type: "text" as const, text: JSON.stringify({ error: result.error }) }], isError: true as const }
+    // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
   }
 
   server.registerTool(
