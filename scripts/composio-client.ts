@@ -99,15 +99,53 @@ async function listAuthConfigs(
   return payload.items ?? []
 }
 
+/** Composio's auth_scheme values. Toolkit decides which is valid; we infer
+ *  from the credentials shape but the caller can always override. */
+export type ComposioAuthScheme =
+  | "OAUTH2"
+  | "OAUTH1"
+  | "API_KEY"
+  | "BASIC"
+  | "BEARER_TOKEN"
+  | "JWT"
+  | "BASIC_WITH_JWT"
+  | "NO_AUTH"
+
+/** Inspect credential field names to guess the auth scheme. */
+export function inferAuthScheme(creds: Record<string, unknown>): ComposioAuthScheme | undefined {
+  if ("api_key" in creds || "apiKey" in creds) return "API_KEY"
+  if ("client_id" in creds && "client_secret" in creds) return "OAUTH2"
+  if ("bearer_token" in creds || "bearerToken" in creds || "token" in creds) return "BEARER_TOKEN"
+  if ("username" in creds && "password" in creds) return "BASIC"
+  if ("username" in creds && ("clientId" in creds || "privateKey" in creds)) return "BASIC_WITH_JWT"
+  if ("jwt" in creds) return "JWT"
+  return undefined
+}
+
 async function createAuthConfig(
   apiKey: string,
   toolkitSlug: string,
   customCredentials: Record<string, unknown> | undefined,
+  authScheme: ComposioAuthScheme | undefined,
   baseUrl?: string,
 ): Promise<string> {
-  const authConfig = customCredentials
-    ? { type: "use_custom_auth" as const, credentials: customCredentials }
-    : { type: "use_composio_managed_auth" as const }
+  let authConfig: Record<string, unknown>
+  if (customCredentials) {
+    const scheme = authScheme ?? inferAuthScheme(customCredentials)
+    if (!scheme) {
+      throw new Error(
+        `Could not infer Composio auth_scheme from credential keys [${Object.keys(customCredentials).join(", ")}]. ` +
+          `Pass --auth-scheme explicitly: API_KEY | OAUTH2 | BASIC | BEARER_TOKEN | JWT | BASIC_WITH_JWT.`,
+      )
+    }
+    authConfig = {
+      type: "use_custom_auth",
+      authScheme: scheme,
+      credentials: customCredentials,
+    }
+  } else {
+    authConfig = { type: "use_composio_managed_auth" }
+  }
 
   const r = await fetch(`${trimBase(baseUrl)}/api/v3/auth_configs`, {
     method: "POST",
@@ -146,6 +184,8 @@ export async function createManagedConnectLink(params: {
   callbackUrl?: string
   baseUrl?: string
   customCredentials?: Record<string, unknown>
+  /** Override the auto-detected auth scheme. Required when inferAuthScheme can't tell. */
+  authScheme?: ComposioAuthScheme
 }): Promise<ManagedConnectLinkResult> {
   const toolkitSlug = required(params.toolkitSlug, "toolkitSlug")
   const userId = required(params.userId, "userId")
@@ -157,7 +197,13 @@ export async function createManagedConnectLink(params: {
   )
   const authConfigId =
     existing?.id ??
-    (await createAuthConfig(params.apiKey, toolkitSlug, params.customCredentials, params.baseUrl))
+    (await createAuthConfig(
+      params.apiKey,
+      toolkitSlug,
+      params.customCredentials,
+      params.authScheme,
+      params.baseUrl,
+    ))
 
   const r = await fetch(`${trimBase(params.baseUrl)}/api/v3/connected_accounts/link`, {
     method: "POST",

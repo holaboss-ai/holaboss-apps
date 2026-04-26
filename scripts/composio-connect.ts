@@ -36,9 +36,14 @@ import { resolve } from "node:path"
 
 import {
   ManagedAuthNotAvailableError,
+  type ComposioAuthScheme,
   createManagedConnectLink,
   waitForConnectedAccount,
 } from "./composio-client.js"
+
+const VALID_AUTH_SCHEMES: ReadonlyArray<ComposioAuthScheme> = [
+  "OAUTH2", "OAUTH1", "API_KEY", "BASIC", "BEARER_TOKEN", "JWT", "BASIC_WITH_JWT", "NO_AUTH",
+]
 
 const CONNECTIONS_PATH = resolve(process.cwd(), ".composio-connections.json")
 
@@ -50,6 +55,7 @@ interface ParsedArgs {
   oauthClientId?: string
   oauthClientSecret?: string
   credentialsJsonRaw?: string
+  authScheme?: ComposioAuthScheme
 }
 
 function parseArgs(argv: Array<string>): ParsedArgs {
@@ -60,6 +66,7 @@ function parseArgs(argv: Array<string>): ParsedArgs {
   let oauthClientId: string | undefined
   let oauthClientSecret: string | undefined
   let credentialsJsonRaw: string | undefined
+  let authScheme: ComposioAuthScheme | undefined
 
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]
@@ -70,9 +77,17 @@ function parseArgs(argv: Array<string>): ParsedArgs {
     else if (a === "--oauth-client-id" && next) { oauthClientId = next; i++ }
     else if (a === "--oauth-client-secret" && next) { oauthClientSecret = next; i++ }
     else if (a === "--credentials-json" && next) { credentialsJsonRaw = next; i++ }
+    else if (a === "--auth-scheme" && next) {
+      const upper = next.toUpperCase() as ComposioAuthScheme
+      if (!VALID_AUTH_SCHEMES.includes(upper)) {
+        throw new Error(`Invalid --auth-scheme '${next}'. Valid: ${VALID_AUTH_SCHEMES.join(", ")}`)
+      }
+      authScheme = upper
+      i++
+    }
   }
 
-  return { toolkitSlug, userId, baseUrl, apiKeyCred, oauthClientId, oauthClientSecret, credentialsJsonRaw }
+  return { toolkitSlug, userId, baseUrl, apiKeyCred, oauthClientId, oauthClientSecret, credentialsJsonRaw, authScheme }
 }
 
 function buildCustomCredentials(args: ParsedArgs): Record<string, unknown> | undefined {
@@ -163,6 +178,7 @@ async function main(): Promise<void> {
       userId: args.userId,
       baseUrl: args.baseUrl,
       customCredentials,
+      authScheme: args.authScheme,
     })
   } catch (e) {
     if (e instanceof ManagedAuthNotAvailableError) {
