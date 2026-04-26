@@ -23,8 +23,42 @@ type ErrorCode =
   | "upstream_error"
   | "internal"
 
+function text(data: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
+}
+function success<T extends Record<string, unknown>>(data: T) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], structuredContent: data }
+}
 function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+
+// Output shapes — copy and tailor to your module's domain.
+const PostStatusEnum = z.enum(["draft", "queued", "scheduled", "published", "failed"])
+const PostRecordShape = {
+  id: z.string(),
+  content: z.string(),
+  status: PostStatusEnum,
+  scheduled_at: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  external_post_id: z.string().nullable().optional(),
+  error_message: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}
+const PublishStatusShape = {
+  status: PostStatusEnum,
+  error_message: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  updated_at: z.string(),
+}
+const PublishResultShape = { job_id: z.string(), status: z.literal("queued") }
+const QueueStatsShape = {
+  waiting: z.number(),
+  active: z.number(),
+  completed: z.number(),
+  failed: z.number(),
+  delayed: z.number(),
 }
 
 function createMcpServer(): McpServer {
@@ -52,6 +86,7 @@ Sibling: pass scheduled_at if you want the publish job delayed; you still must c
             "ISO 8601 with timezone, e.g. '2026-04-26T15:00:00Z'. Stored on the draft only; module_publish_post is what actually schedules it.",
           ),
       },
+      outputSchema: PostRecordShape,
       annotations: {
         title: "Create draft",
         readOnlyHint: false,
@@ -67,7 +102,8 @@ Sibling: pass scheduled_at if you want the publish job delayed; you still must c
       db.prepare(
         "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
       ).run(id, content, scheduled_at ?? null, now, now)
-      return { content: [{ type: "text" as const, text: JSON.stringify({ id, content, status: "draft", scheduled_at }) }] }
+      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      return success(post as unknown as Record<string, unknown>)
     },
   )
 
@@ -80,10 +116,7 @@ Sibling: pass scheduled_at if you want the publish job delayed; you still must c
 When to use: the agent needs to find a specific post or audit recent activity.
 Returns: array of PostRecord. Empty array if none match.`,
       inputSchema: {
-        status: z
-          .string()
-          .optional()
-          .describe("Filter by status: 'draft' | 'queued' | 'scheduled' | 'published' | 'failed'. Omit to list all."),
+        status: PostStatusEnum.optional().describe("Filter by lifecycle state. Omit to list all."),
         limit: z.number().int().positive().max(200).optional().describe("Max results, default 20, max 200."),
       },
       annotations: {
@@ -105,7 +138,7 @@ Returns: array of PostRecord. Empty array if none match.`,
       } else {
         rows = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT ?").all(max) as PostRecord[]
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify(rows) }] }
+      return text(rows)
     },
   )
 
@@ -117,10 +150,11 @@ Returns: array of PostRecord. Empty array if none match.`,
 
 Prerequisites: post_id from module_list_posts or module_create_post.
 Returns: full PostRecord.
-Errors: isError=true with 'Post not found' if post_id is unknown.`,
+Errors: { code: 'not_found' } if post_id is unknown.`,
       inputSchema: {
         post_id: z.string().describe("Post id returned by module_create_post or module_list_posts."),
       },
+      outputSchema: PostRecordShape,
       annotations: {
         title: "Get post by id",
         readOnlyHint: true,
@@ -131,9 +165,9 @@ Errors: isError=true with 'Post not found' if post_id is unknown.`,
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id)
+      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
-      return { content: [{ type: "text" as const, text: JSON.stringify(post) }] }
+      return success(post as unknown as Record<string, unknown>)
     },
   )
 
@@ -147,10 +181,11 @@ When to use: the user has approved a draft and wants it published (or scheduled)
 Prerequisites: a draft created by module_create_post.
 Side effects: status flips to 'queued' (or 'scheduled' if dated future). Actual publishing is async — poll module_get_publish_status for outcome.
 Returns: { job_id, status: 'queued' }.
-Errors: 'Post not found'. NOTE: re-publishing an already-queued post creates a duplicate job — call module_get_publish_status first if unsure.`,
+Errors: { code: 'not_found' } if post_id is unknown. NOTE: re-publishing an already-queued post creates a duplicate job — call module_get_publish_status first if unsure.`,
       inputSchema: {
         post_id: z.string().describe("Draft post id to publish, returned by module_create_post."),
       },
+      outputSchema: PublishResultShape,
       annotations: {
         title: "Publish post",
         readOnlyHint: false,
@@ -173,7 +208,7 @@ Errors: 'Post not found'. NOTE: re-publishing an already-queued post creates a d
       })
 
       db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
-      return { content: [{ type: "text" as const, text: JSON.stringify({ job_id: jobId, status: "queued" }) }] }
+      return success({ job_id: jobId, status: "queued" as const })
     },
   )
 
@@ -186,10 +221,11 @@ Errors: 'Post not found'. NOTE: re-publishing an already-queued post creates a d
 When to use: after module_publish_post, poll until status is 'published' or 'failed'.
 Returns: { status, error_message?, published_at?, updated_at }.
 States: 'draft' | 'queued' | 'scheduled' | 'published' | 'failed'.
-Errors: 'Post not found'.`,
+Errors: { code: 'not_found' } if post_id is unknown.`,
       inputSchema: {
         post_id: z.string().describe("Post id returned by module_create_post or module_publish_post."),
       },
+      outputSchema: PublishStatusShape,
       annotations: {
         title: "Get publish status",
         readOnlyHint: true,
@@ -202,9 +238,9 @@ Errors: 'Post not found'.`,
       const db = getDb()
       const post = db
         .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
-        .get(post_id)
+        .get(post_id) as Record<string, unknown> | undefined
       if (!post) return errCode("not_found", "Post not found")
-      return { content: [{ type: "text" as const, text: JSON.stringify(post) }] }
+      return success(post)
     },
   )
 
@@ -217,6 +253,7 @@ Errors: 'Post not found'.`,
 When to use: diagnostics — confirm work is being processed or piling up.
 Returns: { waiting, active, completed, failed, delayed }.`,
       inputSchema: {},
+      outputSchema: QueueStatsShape,
       annotations: {
         title: "Queue stats",
         readOnlyHint: true,
@@ -227,7 +264,7 @@ Returns: { waiting, active, completed, failed, delayed }.`,
     },
     async () => {
       const stats = await getQueueStats()
-      return { content: [{ type: "text" as const, text: JSON.stringify(stats) }] }
+      return success(stats as unknown as Record<string, unknown>)
     },
   )
 

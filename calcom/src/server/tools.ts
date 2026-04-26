@@ -269,10 +269,62 @@ export function registerTools(server: McpServer): void {
 
   const asText = (result: Result<unknown, CalcomError>) => {
     if (result.ok) {
-      return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
+      // structuredContent matches the tool's outputSchema (when set).
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result.data) }],
+        structuredContent: result.data as Record<string, unknown>,
+      }
     }
     // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
     return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
+  }
+
+  // Output shapes
+  const EventTypeSchema = z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+    length_minutes: z.number(),
+    description: z.string().nullable(),
+    booking_url: z.string(),
+    location_type: z.string().nullable(),
+  })
+  const BookingAttendeeSchema = z.object({
+    name: z.string(),
+    email: z.string(),
+    timezone: z.string().optional(),
+  })
+  const BookingSchema = z.object({
+    id: z.string(),
+    title: z.string(),
+    start_time: z.string(),
+    end_time: z.string(),
+    status: z.string(),
+    event_type_id: z.string().nullable(),
+    attendees: z.array(BookingAttendeeSchema),
+    location: z.string().nullable(),
+    meeting_url: z.string().nullable(),
+  })
+  const ToolSuccessMetaShape = {
+    calcom_object: z.string().optional(),
+    calcom_record_id: z.string().optional(),
+    calcom_deep_link: z.string().optional(),
+    result_summary: z.string().optional(),
+  }
+  const ConnectionStatusShape = {
+    connected: z.boolean(),
+    event_types_count: z.number().optional(),
+    ...ToolSuccessMetaShape,
+  }
+  const EventTypesListShape = { event_types: z.array(EventTypeSchema), ...ToolSuccessMetaShape }
+  const EventTypeOneShape = { event_type: EventTypeSchema, ...ToolSuccessMetaShape }
+  const BookingsListShape = { bookings: z.array(BookingSchema), ...ToolSuccessMetaShape }
+  const BookingOneShape = { booking: BookingSchema, ...ToolSuccessMetaShape }
+  const CancelBookingShape = { booking_id: z.string(), ...ToolSuccessMetaShape }
+  const RescheduleBookingShape = { new_booking_id: z.string(), ...ToolSuccessMetaShape }
+  const SlotsListShape = {
+    slots: z.array(z.object({ start: z.string(), end: z.string() })),
+    ...ToolSuccessMetaShape,
   }
 
   server.registerTool(
@@ -284,6 +336,7 @@ export function registerTools(server: McpServer): void {
 When to use: ALWAYS call this first if a Cal.com tool returns a not_connected error, or before suggesting Cal.com features to a user for the first time.
 Returns: { connected: true, event_types_count } if linked, { connected: false } otherwise. If false, tell the user to connect Cal.com from the Holaboss integrations page.`,
       inputSchema: {},
+      outputSchema: ConnectionStatusShape,
       annotations: {
         title: "Check Cal.com connection",
         readOnlyHint: true,
@@ -310,6 +363,7 @@ Errors: { error: { code: 'not_connected' } } if Cal.com isn't linked — call ca
           .optional()
           .describe("Filter by a specific Cal.com username. Omit to use the connected workspace user."),
       },
+      outputSchema: EventTypesListShape,
       annotations: {
         title: "List event types",
         readOnlyHint: true,
@@ -332,6 +386,7 @@ Returns: { event_type: { id, slug, title, length_minutes, description, booking_u
       inputSchema: {
         event_type_id: z.string().describe("Cal.com event type id, e.g. '12345' (from calcom_list_event_types)."),
       },
+      outputSchema: EventTypeOneShape,
       annotations: {
         title: "Get event type",
         readOnlyHint: true,
@@ -362,6 +417,7 @@ Returns: array of { id, title, start_time, end_time, status, event_type_id, atte
           .describe("Exact attendee email to filter by, e.g. 'alice@example.com'."),
         limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
       },
+      outputSchema: BookingsListShape,
       annotations: {
         title: "List bookings",
         readOnlyHint: true,
@@ -384,6 +440,7 @@ Returns: { booking: { id, title, start_time, end_time, status, attendees, locati
       inputSchema: {
         booking_id: z.string().describe("Cal.com booking id (from calcom_list_bookings)."),
       },
+      outputSchema: BookingOneShape,
       annotations: {
         title: "Get booking",
         readOnlyHint: true,
@@ -412,6 +469,7 @@ Returns: { booking_id, calcom_deep_link, result_summary }.`,
           .optional()
           .describe("Reason for cancellation; included verbatim in the attendee notification. Default 'Cancelled via Holaboss'."),
       },
+      outputSchema: CancelBookingShape,
       annotations: {
         title: "Cancel booking",
         readOnlyHint: false,
@@ -443,6 +501,7 @@ Returns: { new_booking_id, calcom_deep_link, result_summary }.`,
           .optional()
           .describe("Reason for the change; included verbatim in the attendee notification. Default 'Rescheduled via Holaboss'."),
       },
+      outputSchema: RescheduleBookingShape,
       annotations: {
         title: "Reschedule booking",
         readOnlyHint: false,
@@ -474,6 +533,7 @@ Returns: { slots: [{ start, end }] } in ISO 8601. Empty array means no availabil
           .optional()
           .describe("IANA timezone for slot times, e.g. 'America/New_York' or 'Europe/Berlin'."),
       },
+      outputSchema: SlotsListShape,
       annotations: {
         title: "List available slots",
         readOnlyHint: true,

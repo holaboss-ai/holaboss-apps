@@ -25,8 +25,43 @@ type ErrorCode =
   | "internal"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
+function success<T extends Record<string, unknown>>(data: T) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], structuredContent: data }
+}
 function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
+}
+
+const PostStatusEnum = z.enum(["draft", "queued", "scheduled", "published", "failed"])
+const PostRecordShape = {
+  id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  subreddit: z.string(),
+  status: PostStatusEnum,
+  scheduled_at: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  external_post_id: z.string().nullable().optional(),
+  error_message: z.string().nullable().optional(),
+  output_id: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}
+const PublishStatusShape = {
+  status: PostStatusEnum,
+  error_message: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  updated_at: z.string(),
+}
+const PublishResultShape = { job_id: z.string(), status: z.literal("queued") }
+const CancelResultShape = { cancelled: z.literal(true) }
+const DeleteResultShape = { deleted: z.literal(true), post_id: z.string() }
+const QueueStatsShape = {
+  waiting: z.number(),
+  active: z.number(),
+  completed: z.number(),
+  failed: z.number(),
+  delayed: z.number(),
 }
 
 async function syncAndPersist(
@@ -53,7 +88,8 @@ function createMcpServer(): McpServer {
 When to use: the user asks to compose, draft, or write a Reddit post.
 When NOT to use: to submit an existing draft (use reddit_publish_post). To edit a draft (use reddit_update_post).
 Returns: full PostRecord — { id, title, content, subreddit, status: 'draft', scheduled_at?, created_at, updated_at, output_id? }.
-Sibling: pass scheduled_at here (or via reddit_update_post) to defer submission; the actual scheduling is committed when reddit_publish_post is called.`,
+Sibling: pass scheduled_at here (or via reddit_update_post) to defer submission; the actual scheduling is committed when reddit_publish_post is called.
+Errors: { code: 'internal' } on unexpected exception.`,
       inputSchema: {
         title: z
           .string()
@@ -73,6 +109,7 @@ Sibling: pass scheduled_at here (or via reddit_update_post) to defer submission;
             "ISO 8601 with timezone, e.g. '2026-04-26T15:00:00Z'. Stored on the draft only; reddit_publish_post is what actually schedules it.",
           ),
       },
+      outputSchema: PostRecordShape,
       annotations: {
         title: "Create Reddit draft",
         readOnlyHint: false,
@@ -92,7 +129,7 @@ Sibling: pass scheduled_at here (or via reddit_update_post) to defer submission;
 
         const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
         const synced = await syncAndPersist(db, post, extra.requestInfo?.headers)
-        return text(synced)
+        return success(synced as unknown as Record<string, unknown>)
       } catch (error) {
         return errCode("internal", error instanceof Error ? error.message : String(error))
       }
@@ -108,7 +145,7 @@ Sibling: pass scheduled_at here (or via reddit_update_post) to defer submission;
 When to use: revise a draft before submitting, retarget to a different subreddit, or change scheduled_at.
 When NOT to use: to edit a post that has already been submitted (this updates only the local record; Reddit is NOT re-edited).
 Returns: full updated PostRecord.
-Errors: 'Post not found' if post_id doesn't exist.`,
+Errors: { code: 'not_found' } if post_id is unknown.`,
       inputSchema: {
         post_id: z.string().describe("Post id returned by reddit_create_post or reddit_list_posts."),
         title: z.string().max(300).optional().describe("New title. Max 300 chars."),
@@ -122,6 +159,7 @@ Errors: 'Post not found' if post_id doesn't exist.`,
           .optional()
           .describe("New ISO 8601 schedule time with timezone, e.g. '2026-04-26T15:00:00Z'."),
       },
+      outputSchema: PostRecordShape,
       annotations: {
         title: "Update Reddit draft",
         readOnlyHint: false,
@@ -146,7 +184,7 @@ Errors: 'Post not found' if post_id doesn't exist.`,
       db.prepare(`UPDATE posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
       const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
       const synced = await syncAndPersist(db, updated, extra.requestInfo?.headers)
-      return text(synced)
+      return success(synced as unknown as Record<string, unknown>)
     },
   )
 
@@ -159,10 +197,7 @@ Errors: 'Post not found' if post_id doesn't exist.`,
 When to use: find a specific draft, audit recent activity, filter by subreddit or lifecycle state.
 Returns: array of PostRecord. Empty array if none match.`,
       inputSchema: {
-        status: z
-          .enum(["draft", "queued", "scheduled", "published", "failed"])
-          .optional()
-          .describe("Filter by lifecycle state. Omit to list all states."),
+        status: PostStatusEnum.optional().describe("Filter by lifecycle state. Omit to list all states."),
         subreddit: z
           .string()
           .optional()
@@ -202,10 +237,11 @@ Returns: array of PostRecord. Empty array if none match.`,
 
 Prerequisites: post_id from reddit_create_post or reddit_list_posts.
 Returns: full PostRecord including title, content, subreddit, status, scheduled_at, published_at, error_message, output_id.
-Errors: 'Post not found' if post_id is unknown.`,
+Errors: { code: 'not_found' } if post_id is unknown.`,
       inputSchema: {
         post_id: z.string().describe("Post id returned by reddit_create_post or reddit_list_posts."),
       },
+      outputSchema: PostRecordShape,
       annotations: {
         title: "Get Reddit post by id",
         readOnlyHint: true,
@@ -216,9 +252,9 @@ Errors: 'Post not found' if post_id is unknown.`,
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id)
+      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
-      return text(post)
+      return success(post as unknown as Record<string, unknown>)
     },
   )
 
@@ -232,10 +268,11 @@ When to use: the user has approved a draft and wants it submitted to Reddit (now
 Prerequisites: a draft created by reddit_create_post.
 Side effects: status flips to 'queued'. The actual Reddit API call happens asynchronously — poll reddit_get_publish_status until status is 'published' or 'failed'.
 Returns: { job_id, status: 'queued' }.
-Errors: 'Post not found'. NOTE: re-calling on an already-queued post creates a duplicate job — call reddit_get_publish_status first if unsure. Subreddit-specific submission rules (karma minimums, account age, flair) surface as a 'failed' status with error_message.`,
+Errors: { code: 'not_found' } if post_id is unknown. Subreddit-specific submission rules (karma minimums, account age, flair) surface as a 'failed' status with error_message via reddit_get_publish_status. NOTE: re-calling on an already-queued post creates a duplicate job — call reddit_get_publish_status first if unsure.`,
       inputSchema: {
         post_id: z.string().describe("Draft post id to publish, returned by reddit_create_post."),
       },
+      outputSchema: PublishResultShape,
       annotations: {
         title: "Publish Reddit post",
         readOnlyHint: false,
@@ -262,7 +299,7 @@ Errors: 'Post not found'. NOTE: re-calling on an already-queued post creates a d
       db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
       const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
-      return text({ job_id: jobId, status: "queued" })
+      return success({ job_id: jobId, status: "queued" as const })
     },
   )
 
@@ -275,10 +312,11 @@ Errors: 'Post not found'. NOTE: re-calling on an already-queued post creates a d
 When to use: after reddit_publish_post, poll until status is 'published' (success) or 'failed' (error_message will explain — common: subreddit rules, karma minimum, rate limit).
 Returns: { status, error_message?, published_at?, updated_at }.
 States: 'draft' | 'queued' | 'scheduled' | 'published' | 'failed'.
-Errors: 'Post not found'.`,
+Errors: { code: 'not_found' } if post_id is unknown.`,
       inputSchema: {
         post_id: z.string().describe("Post id returned by reddit_create_post or reddit_publish_post."),
       },
+      outputSchema: PublishStatusShape,
       annotations: {
         title: "Get publish status",
         readOnlyHint: true,
@@ -291,9 +329,9 @@ Errors: 'Post not found'.`,
       const db = getDb()
       const post = db
         .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
-        .get(post_id)
+        .get(post_id) as Record<string, unknown> | undefined
       if (!post) return errCode("not_found", "Post not found")
-      return text(post)
+      return success(post)
     },
   )
 
@@ -306,10 +344,11 @@ Errors: 'Post not found'.`,
 When to use: the user wants to stop a pending submission to edit further or abandon it before it goes live.
 Valid states: 'queued' or 'scheduled'. Calling on draft / published / failed returns isError with the offending state.
 Returns: { cancelled: true }.
-Errors: 'Post not found', or "Cannot cancel post in '<state>' state".`,
+Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', current_status, allowed_from } if status is not 'queued'/'scheduled'.`,
       inputSchema: {
         post_id: z.string().describe("Post id (queued or scheduled) to roll back to 'draft'."),
       },
+      outputSchema: CancelResultShape,
       annotations: {
         title: "Cancel publish",
         readOnlyHint: false,
@@ -328,7 +367,7 @@ Errors: 'Post not found', or "Cannot cancel post in '<state>' state".`,
       db.prepare("UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
       const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
-      return text({ cancelled: true })
+      return success({ cancelled: true as const })
     },
   )
 
@@ -341,10 +380,11 @@ Errors: 'Post not found', or "Cannot cancel post in '<state>' state".`,
 When to use: throw away a draft or a failed attempt the user no longer wants in their list.
 Valid states: 'draft' or 'failed'. For 'queued' / 'scheduled', call reddit_cancel_publish first to roll back to 'draft'. 'published' cannot be deleted.
 Returns: { deleted: true, post_id }.
-Errors: 'Post not found', "Cannot delete post in 'queued/scheduled' state. Cancel it first.", "Cannot delete a published post".`,
+Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', current_status, hint? } if status is 'queued' / 'scheduled' / 'published'.`,
       inputSchema: {
         post_id: z.string().describe("Draft or failed post id to delete."),
       },
+      outputSchema: DeleteResultShape,
       annotations: {
         title: "Delete Reddit post record",
         readOnlyHint: false,
@@ -367,7 +407,7 @@ Errors: 'Post not found', "Cannot delete post in 'queued/scheduled' state. Cance
           console.error(`[mcp] reddit output mark-deleted failed for post ${post_id}:`, syncError)
         }
       }
-      return text({ deleted: true, post_id })
+      return success({ deleted: true as const, post_id })
     },
   )
 
@@ -380,6 +420,7 @@ Errors: 'Post not found', "Cannot delete post in 'queued/scheduled' state. Cance
 When to use: diagnostics — confirm work is being processed or piling up.
 Returns: { waiting, active, completed, failed, delayed }.`,
       inputSchema: {},
+      outputSchema: QueueStatsShape,
       annotations: {
         title: "Queue stats",
         readOnlyHint: true,
@@ -390,7 +431,7 @@ Returns: { waiting, active, completed, failed, delayed }.`,
     },
     async () => {
       const stats = await getQueueStats()
-      return text(stats)
+      return success(stats as unknown as Record<string, unknown>)
     },
   )
 

@@ -23,12 +23,65 @@ type ErrorCode =
   | "internal"
 
 function text(data: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] } }
+function success<T extends Record<string, unknown>>(data: T) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], structuredContent: data }
+}
 function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
 }
 function upstreamErr(e: unknown) {
   return errCode("upstream_error", e instanceof Error ? e.message : String(e))
 }
+
+// Output shapes
+const DraftStatusEnum = z.enum(["pending", "queued", "sent", "failed", "discarded"])
+const DraftRecordShape = {
+  id: z.string(),
+  to_email: z.string(),
+  gmail_thread_id: z.string().nullable(),
+  subject: z.string().nullable(),
+  body: z.string(),
+  status: DraftStatusEnum,
+  output_id: z.string().nullable(),
+  error_message: z.string().nullable(),
+  sent_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}
+const SendResultShape = {
+  draft_id: z.string(),
+  job_id: z.union([z.string(), z.number()]),
+  output_id: z.string().nullable(),
+  status: z.literal("queued"),
+}
+const SendStatusShape = {
+  draft_id: z.string(),
+  status: DraftStatusEnum,
+  error_message: z.string().nullable(),
+  sent_at: z.string().nullable(),
+  updated_at: z.string(),
+}
+const ParsedMessageSchema = z.object({
+  id: z.string(),
+  from: z.string(),
+  to: z.string(),
+  subject: z.string(),
+  snippet: z.string(),
+  body: z.string(),
+  sentAt: z.string(),
+}).passthrough()
+const ThreadShape = {
+  id: z.string(),
+  messages: z.array(ParsedMessageSchema),
+}
+const OpenThreadShape = {
+  id: z.string(),
+  subject: z.string(),
+  primary_email: z.string().nullable(),
+  output_id: z.string().nullable(),
+  messages: z.array(ParsedMessageSchema),
+}
+const DeleteResultShape = { deleted: z.literal(true), draft_id: z.string() }
 
 function extractEmailAddress(value: string): string {
   const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
@@ -99,10 +152,12 @@ Returns: array of thread snippets — { id, snippet, lastMessageDate, ... }.`,
 
 Prerequisites: thread_id from gmail_search or gmail_open_thread.
 When to use: the user wants to read or summarize an entire thread; you need full message bodies to compose a reply.
-Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }] } in chronological order.`,
+Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }] } in chronological order.
+Errors: { code: 'upstream_error' } on Gmail API failures.`,
       inputSchema: {
         thread_id: z.string().describe("Gmail thread id from gmail_search results."),
       },
+      outputSchema: ThreadShape,
       annotations: {
         title: "Get Gmail thread",
         readOnlyHint: true,
@@ -115,7 +170,7 @@ Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }]
       try {
         const thread = await getThread(thread_id)
         const messages = thread.messages.map(parseMessage)
-        return text({ id: thread.id, messages })
+        return success({ id: thread.id, messages } as Record<string, unknown>)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -131,7 +186,8 @@ Returns: { id, messages: [{ id, from, to, subject, snippet, body, sentAt, ... }]
 When to use: before adding a thread to a CRM follow-up workflow, or when the user asks to 'save', 'pin', or 'track' an email thread.
 Prerequisites: thread_id from gmail_search.
 Side effects: publishes (or updates) an app output that other modules can link to. Pass contact_row_ref to wire it to a Sheets CRM contact.
-Returns: { id, subject, primary_email, output_id, messages }.`,
+Returns: { id, subject, primary_email, output_id, messages }.
+Errors: { code: 'upstream_error' } on Gmail API failures.`,
       inputSchema: {
         thread_id: z.string().describe("Gmail thread id from gmail_search."),
         contact_email: z
@@ -145,6 +201,7 @@ Returns: { id, subject, primary_email, output_id, messages }.`,
             "Sheets contact row reference for CRM linking — typically the value returned by sheets tools when working with a contacts sheet.",
           ),
       },
+      outputSchema: OpenThreadShape,
       annotations: {
         title: "Open thread as workspace output",
         readOnlyHint: false,
@@ -172,13 +229,13 @@ Returns: { id, subject, primary_email, output_id, messages }.`,
           contactRowRef: contact_row_ref ?? null,
         })
 
-        return text({
+        return success({
           id: thread.id,
           subject,
           primary_email: primaryEmail || null,
           output_id: outputId,
           messages,
-        })
+        } as Record<string, unknown>)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -194,7 +251,8 @@ Returns: { id, subject, primary_email, output_id, messages }.`,
 When to use: the user dictates a reply or new email to compose, OR you want to stage an outgoing email for review.
 When NOT to use: to update an existing draft (use gmail_update_draft). To send immediately (call gmail_send_draft after this).
 Prerequisites: for replies, thread_id from gmail_search or gmail_get_thread (so Gmail threads correctly).
-Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, status: 'pending', output_id?, ... }.`,
+Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, status: 'pending', output_id?, ... }.
+Errors: { code: 'upstream_error' } if the workspace output sync fails.`,
       inputSchema: {
         to_email: z.string().describe("Recipient email address, e.g. 'alice@example.com'."),
         subject: z.string().optional().describe("Email subject. Optional for replies (Gmail uses the thread subject)."),
@@ -210,6 +268,7 @@ Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, s
             "Sheets contact row reference for CRM linking — value typically returned by sheets tools when working with a contacts sheet.",
           ),
       },
+      outputSchema: DraftRecordShape,
       annotations: {
         title: "Create email draft",
         readOnlyHint: false,
@@ -241,7 +300,7 @@ Returns: full DraftRecord — { id, to_email, subject, body, gmail_thread_id?, s
           db.prepare("DELETE FROM drafts WHERE id = ?").run(id)
           throw outputError
         }
-        return text(draft)
+        return success(draft as unknown as Record<string, unknown>)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -259,10 +318,11 @@ Prerequisites: a draft created by gmail_draft_reply.
 Valid states: 'pending' or 'failed' (retries a failed draft). Calling on 'queued' / 'sent' / 'discarded' returns isError.
 Side effects: status flips to 'queued'. The actual Gmail API call happens asynchronously.
 Returns: { draft_id, job_id, output_id?, status: 'queued' }.
-Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
+Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', current_status, allowed_from } if status isn't 'pending' or 'failed'.`,
       inputSchema: {
         draft_id: z.string().describe("Local draft id returned by gmail_draft_reply."),
       },
+      outputSchema: SendResultShape,
       annotations: {
         title: "Send draft",
         readOnlyHint: false,
@@ -292,11 +352,11 @@ Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
           "UPDATE drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
         ).run(draft_id)
 
-        return text({
+        return success({
           draft_id,
           job_id: jobId,
           output_id: draft.output_id,
-          status: "queued",
+          status: "queued" as const,
         })
       } catch (e) {
         return upstreamErr(e)
@@ -313,7 +373,7 @@ Errors: 'Draft not found', "Draft cannot be sent (status: <state>)".`,
 When to use: revise a draft before sending, or fix a failed send and retry.
 Valid states: 'pending' or 'failed'. Calling on 'queued' / 'sent' / 'discarded' returns isError.
 Returns: full updated DraftRecord.
-Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
+Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', current_status, allowed_from } if status isn't 'pending' or 'failed'.`,
       inputSchema: {
         draft_id: z.string().describe("Local draft id returned by gmail_draft_reply or gmail_list_drafts."),
         to_email: z.string().optional().describe("New recipient email."),
@@ -321,6 +381,7 @@ Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
         body: z.string().optional().describe("New body text."),
         thread_id: z.string().optional().describe("Gmail thread id to link this draft as a reply."),
       },
+      outputSchema: DraftRecordShape,
       annotations: {
         title: "Update draft",
         readOnlyHint: false,
@@ -354,7 +415,7 @@ Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
         } catch (outputError) {
           console.warn("[gmail] failed to sync draft output after update", outputError)
         }
-        return text(updated)
+        return success(updated as unknown as Record<string, unknown>)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -370,10 +431,11 @@ Errors: 'Draft not found', "Draft cannot be edited (status: <state>)".`,
 When to use: after gmail_send_draft, poll until status is 'sent' (success) or 'failed' (error_message will explain).
 Returns: { draft_id, status, error_message?, sent_at?, updated_at }.
 States: 'pending' | 'queued' | 'sent' | 'failed' | 'discarded'.
-Errors: 'Draft not found'.`,
+Errors: { code: 'not_found' } if draft_id is unknown.`,
       inputSchema: {
         draft_id: z.string().describe("Local draft id returned by gmail_draft_reply or gmail_send_draft."),
       },
+      outputSchema: SendStatusShape,
       annotations: {
         title: "Get send status",
         readOnlyHint: true,
@@ -387,7 +449,7 @@ Errors: 'Draft not found'.`,
         const db = getDb()
         const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
         if (!draft) return errCode("not_found", "Draft not found")
-        return text({
+        return success({
           draft_id,
           status: draft.status,
           error_message: draft.error_message,
@@ -409,10 +471,11 @@ Errors: 'Draft not found'.`,
 When to use: throw away a draft the user no longer wants.
 Valid states: 'pending' or 'failed'. 'queued' (currently being sent) and 'sent' (already delivered) cannot be deleted.
 Returns: { deleted: true, draft_id }.
-Errors: 'Draft not found', 'Cannot delete a draft that is currently being sent', 'Cannot delete a sent email'.`,
+Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', current_status } if status is 'queued' or 'sent'.`,
       inputSchema: {
         draft_id: z.string().describe("Local draft id (must be 'pending' or 'failed')."),
       },
+      outputSchema: DeleteResultShape,
       annotations: {
         title: "Delete draft",
         readOnlyHint: false,
@@ -429,7 +492,7 @@ Errors: 'Draft not found', 'Cannot delete a draft that is currently being sent',
         if (draft.status === "queued") return errCode("invalid_state", "Cannot delete a draft that is currently being sent", { current_status: "queued" })
         if (draft.status === "sent") return errCode("invalid_state", "Cannot delete a sent email", { current_status: "sent" })
         db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
-        return text({ deleted: true, draft_id })
+        return success({ deleted: true as const, draft_id })
       } catch (e) {
         return upstreamErr(e)
       }

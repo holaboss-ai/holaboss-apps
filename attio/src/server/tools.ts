@@ -455,11 +455,62 @@ export async function addToListImpl(
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 const asText = (result: Result<unknown, AttioError>) => {
   if (result.ok) {
-    return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
+    // structuredContent matches the tool's outputSchema (when set).
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result.data) }],
+      structuredContent: result.data as Record<string, unknown>,
+    }
   }
   // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
   return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
 }
+
+// Output shapes (MCP outputSchema). Attio attribute payloads are dynamic
+// per workspace, so record-shaped fields use z.record(z.unknown()).
+const ToolSuccessMetaShape = {
+  attio_object: z.string().optional(),
+  attio_record_id: z.string().optional(),
+  attio_deep_link: z.string().optional(),
+  result_summary: z.string().optional(),
+}
+const RecordRefSchema = z.record(z.string(), z.unknown())
+const SchemaAttributeSchema = z.object({
+  slug: z.string(),
+  title: z.string(),
+  type: z.string(),
+  is_required: z.boolean(),
+  is_unique: z.boolean(),
+  options: z.unknown().optional(),
+})
+const SchemaObjectSchema = z.object({
+  slug: z.string(),
+  plural_name: z.string(),
+  attributes: z.array(SchemaAttributeSchema),
+})
+const ConnectionStatusShape = {
+  connected: z.boolean(),
+  workspace_name: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const DescribeSchemaShape = { objects: z.array(SchemaObjectSchema), ...ToolSuccessMetaShape }
+const PeopleListShape = { records: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const CompaniesListShape = { records: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const PersonOneShape = { record: RecordRefSchema, ...ToolSuccessMetaShape }
+const RecordIdShape = {
+  record_id: z.string(),
+  record_url: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const NoteIdShape = {
+  note_id: z.string(),
+  note_url: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const LinkResultShape = { ok: z.literal(true), ...ToolSuccessMetaShape }
+const TaskIdShape = { task_id: z.string(), ...ToolSuccessMetaShape }
+const TasksListShape = { tasks: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const ListEntriesShape = { entries: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const ListEntryShape = { entry_id: z.string(), ...ToolSuccessMetaShape }
 
 export function registerTools(server: McpServer): void {
   const findPeople = wrapTool("attio_find_people", findPeopleImpl)
@@ -489,6 +540,7 @@ Returns: { objects: [{ api_slug, name, attributes: [{ api_slug, type, is_require
           .optional()
           .describe("Object api_slugs to describe, e.g. ['people','companies','deals','workspaces']."),
       },
+      outputSchema: DescribeSchemaShape,
       annotations: {
         title: "Describe Attio schema",
         readOnlyHint: true,
@@ -509,6 +561,7 @@ Returns: { objects: [{ api_slug, name, attributes: [{ api_slug, type, is_require
 When to use: ALWAYS call this first if any Attio tool returns a not_connected error, or before suggesting Attio features for the first time.
 Returns: { connected: true, workspace_name } if linked, { connected: false } otherwise. If false, tell the user to connect Attio from the Holaboss integrations page.`,
       inputSchema: {},
+      outputSchema: ConnectionStatusShape,
       annotations: {
         title: "Check Attio connection",
         readOnlyHint: true,
@@ -534,6 +587,7 @@ Returns: array of person records, each with record_id and attribute values.`,
           .describe("Name fragment or email substring, e.g. 'alice' or 'acme.com'. Case-insensitive contains match."),
         limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
       },
+      outputSchema: PeopleListShape,
       annotations: {
         title: "Find people",
         readOnlyHint: true,
@@ -556,6 +610,7 @@ Returns: full person record with attribute slugs as keys.`,
       inputSchema: {
         record_id: z.string().describe("Attio person record id (from attio_find_people)."),
       },
+      outputSchema: PersonOneShape,
       annotations: {
         title: "Get person",
         readOnlyHint: true,
@@ -584,6 +639,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload — 
             "Map of attribute_slug → value, e.g. { name: 'Alice', email_addresses: ['a@b.com'], job_title: 'CTO' }. Slugs come from attio_describe_schema.",
           ),
       },
+      outputSchema: RecordIdShape,
       annotations: {
         title: "Create person",
         readOnlyHint: false,
@@ -612,6 +668,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
             "Map of attribute_slug → new value, e.g. { job_title: 'VP Engineering' }. Only listed slugs are modified.",
           ),
       },
+      outputSchema: RecordIdShape,
       annotations: {
         title: "Update person",
         readOnlyHint: false,
@@ -637,6 +694,7 @@ Returns: array of company records, each with record_id and attribute values.`,
           .describe("Name fragment or domain substring, e.g. 'acme' or 'acme.com'. Case-insensitive contains match."),
         limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
       },
+      outputSchema: CompaniesListShape,
       annotations: {
         title: "Find companies",
         readOnlyHint: true,
@@ -665,6 +723,7 @@ Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
             "Map of attribute_slug → value, e.g. { name: 'Acme', domains: ['acme.com'], industry: 'Software' }. Slugs come from attio_describe_schema.",
           ),
       },
+      outputSchema: RecordIdShape,
       annotations: {
         title: "Create company",
         readOnlyHint: false,
@@ -689,6 +748,7 @@ Returns: updated person record showing the new company link.`,
         person_id: z.string().describe("Attio person record id."),
         company_id: z.string().describe("Attio company record id."),
       },
+      outputSchema: LinkResultShape,
       annotations: {
         title: "Link person to company",
         readOnlyHint: false,
@@ -717,6 +777,7 @@ Returns: { note_id, ... } of the created note.`,
         title: z.string().describe("Note title (single line)."),
         content: z.string().describe("Note body in plaintext (no Markdown rendering in Attio's timeline)."),
       },
+      outputSchema: NoteIdShape,
       annotations: {
         title: "Add note",
         readOnlyHint: false,
@@ -755,6 +816,7 @@ Returns: { task_id, ... } of the created task.`,
             "Records to link this task to, e.g. [{ object: 'people', record_id: 'rec_1' }, { object: 'companies', record_id: 'rec_2' }].",
           ),
       },
+      outputSchema: TaskIdShape,
       annotations: {
         title: "Create task",
         readOnlyHint: false,
@@ -788,6 +850,7 @@ Returns: array of tasks with content, deadline_at, status, assignee, linked_reco
           .describe("Optional combined filter. Omit to list all."),
         limit: z.number().int().positive().max(200).optional().describe("Max results, default 50, max 200."),
       },
+      outputSchema: TasksListShape,
       annotations: {
         title: "List tasks",
         readOnlyHint: true,
@@ -811,6 +874,7 @@ Returns: array of { entry_id, parent_record_id, parent_object, entry_values: { s
         list_id: z.string().describe("Attio list id (find via the Attio UI's list URL)."),
         limit: z.number().int().positive().max(200).optional().describe("Max entries, default 50, max 200."),
       },
+      outputSchema: ListEntriesShape,
       annotations: {
         title: "List records in pipeline",
         readOnlyHint: true,
@@ -846,6 +910,7 @@ Returns: { entry_id, parent_record_id, ... }.`,
             "List-level entry attributes (e.g. { stage: 'qualified', deal_value: 5000 }). DISTINCT from the parent record's attributes.",
           ),
       },
+      outputSchema: ListEntryShape,
       annotations: {
         title: "Add or update list entry",
         readOnlyHint: false,

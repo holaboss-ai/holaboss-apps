@@ -32,12 +32,52 @@ function text(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] }
 }
 
+function success<T extends Record<string, unknown>>(data: T) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], structuredContent: data }
+}
+
 function errCode(code: ErrorCode, message: string, extra: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text: JSON.stringify({ code, message, ...extra }) }], isError: true as const }
 }
 
 function upstreamErr(e: unknown) {
   return errCode("upstream_error", e instanceof Error ? e.message : String(e))
+}
+
+// Output shapes
+const SheetInfoShape = {
+  title: z.string(),
+  headers: z.array(z.string()),
+  rowCount: z.number(),
+}
+const CreateSpreadsheetShape = {
+  created: z.literal(true),
+  spreadsheet_id: z.string(),
+  title: z.string(),
+  headers: z.array(z.string()),
+}
+const UpdateCellResultShape = {
+  updated: z.literal(true),
+  range: z.string(),
+  value: z.string(),
+  output_id: z.string().optional(),
+}
+const AppendRowResultShape = {
+  appended: z.literal(true),
+  values: z.array(z.string()),
+  output_id: z.string().optional(),
+}
+const UpdateRowResultShape = {
+  updated: z.literal(true),
+  row_number: z.number(),
+  values: z.record(z.string(), z.string()),
+  output_id: z.string().optional(),
+}
+const DeleteRowResultShape = { deleted: z.literal(true), row_number: z.number() }
+const AddSheetResultShape = {
+  added: z.literal(true),
+  sheet_id: z.union([z.string(), z.number()]).optional(),
+  title: z.string().optional(),
 }
 
 function findEmailColumnIndex(headers: string[]): number {
@@ -71,6 +111,7 @@ Returns: { title, headers: string[], rowCount }.`,
       inputSchema: {
         sheet_id: z.string().describe("Google Sheets spreadsheet id, the long string in the sheet URL after '/d/'."),
       },
+      outputSchema: SheetInfoShape,
       annotations: {
         title: "Get sheet info",
         readOnlyHint: true,
@@ -82,7 +123,7 @@ Returns: { title, headers: string[], rowCount }.`,
     async ({ sheet_id }) => {
       try {
         const info = await getSheetInfo(sheet_id)
-        return text(info)
+        return success(info as unknown as Record<string, unknown>)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -107,6 +148,7 @@ Returns: { created: true, spreadsheet_id, title, headers }. Use spreadsheet_id w
           .optional()
           .describe("Optional initial data rows, e.g. [['Alice', 'a@b.com', 'Acme', 'lead']]."),
       },
+      outputSchema: CreateSpreadsheetShape,
       annotations: {
         title: "Create spreadsheet",
         readOnlyHint: false,
@@ -118,7 +160,7 @@ Returns: { created: true, spreadsheet_id, title, headers }. Use spreadsheet_id w
     async ({ title, headers, rows }) => {
       try {
         const spreadsheetId = await createSpreadsheet(title, headers, rows ?? [])
-        return text({ created: true, spreadsheet_id: spreadsheetId, title, headers })
+        return success({ created: true as const, spreadsheet_id: spreadsheetId, title, headers })
       } catch (e) {
         return upstreamErr(e)
       }
@@ -258,6 +300,7 @@ Returns: { updated: true, range, value, output_id? }.`,
           .optional()
           .describe("Contact email — pass with contact_name to publish a CRM output for the row containing this cell."),
       },
+      outputSchema: UpdateCellResultShape,
       annotations: {
         title: "Update cell",
         readOnlyHint: false,
@@ -294,7 +337,7 @@ Returns: { updated: true, range, value, output_id? }.`,
           }
         }
 
-        return text(result)
+        return success(result)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -319,6 +362,7 @@ Returns: { appended: true, values, output_id? }.`,
           .optional()
           .describe("Sheet tab name to append to, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
       },
+      outputSchema: AppendRowResultShape,
       annotations: {
         title: "Append row",
         readOnlyHint: false,
@@ -363,7 +407,7 @@ Returns: { appended: true, values, output_id? }.`,
           // non-fatal
         }
 
-        return text(result)
+        return success(result)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -402,6 +446,7 @@ Returns: { updated: true, row_number, values, output_id? }.`,
           .optional()
           .describe("Contact email — pass with contact_name to publish a CRM output for this row."),
       },
+      outputSchema: UpdateRowResultShape,
       annotations: {
         title: "Update row",
         readOnlyHint: false,
@@ -440,7 +485,7 @@ Returns: { updated: true, row_number, values, output_id? }.`,
           }
         }
 
-        return text(result)
+        return success(result)
       } catch (e) {
         return upstreamErr(e)
       }
@@ -467,6 +512,7 @@ Returns: { deleted: true, row_number }.`,
           .optional()
           .describe("Sheet tab name, e.g. 'Sheet1' or 'Contacts'. Default 'Sheet1'."),
       },
+      outputSchema: DeleteRowResultShape,
       annotations: {
         title: "Delete row",
         readOnlyHint: false,
@@ -478,7 +524,7 @@ Returns: { deleted: true, row_number }.`,
     async ({ sheet_id, row_number, range }) => {
       try {
         await deleteRow(sheet_id, range ?? "Sheet1", row_number)
-        return text({ deleted: true, row_number })
+        return success({ deleted: true as const, row_number })
       } catch (e) {
         return upstreamErr(e)
       }
@@ -497,6 +543,7 @@ Returns: { added: true, sheet_id, title, ... } where sheet_id is the new tab's i
         sheet_id: z.string().describe("Spreadsheet id (the file). NOT the tab id."),
         title: z.string().describe("Name for the new tab, e.g. 'Companies' or 'Q2 Pipeline'."),
       },
+      outputSchema: AddSheetResultShape,
       annotations: {
         title: "Add sheet tab",
         readOnlyHint: false,
@@ -508,7 +555,7 @@ Returns: { added: true, sheet_id, title, ... } where sheet_id is the new tab's i
     async ({ sheet_id, title }) => {
       try {
         const result = await addSheet(sheet_id, title)
-        return text({ added: true, ...result })
+        return success({ added: true as const, ...(result as Record<string, unknown>) })
       } catch (e) {
         return upstreamErr(e)
       }
