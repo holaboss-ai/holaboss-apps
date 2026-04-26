@@ -1,12 +1,8 @@
-// Canonical codes per ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
 export type AttioErrorCode =
-  | "not_found"
-  | "invalid_state"
-  | "validation_failed"
   | "not_connected"
   | "rate_limited"
+  | "validation_failed"
   | "upstream_error"
-  | "internal"
 
 export interface AttioError {
   code: AttioErrorCode
