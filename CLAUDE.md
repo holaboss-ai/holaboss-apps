@@ -224,10 +224,19 @@ Modules are deployed into Holaboss sandbox containers via `app.runtime.yaml`. Th
 - **Biome-style linting** — no TypeScript enums, use `import type`, `for...of` over `.forEach`
 - **SQLite only** — no external dependencies (Redis, Postgres, etc.) inside a module
 
+## Marketplace registry — `marketplace.json` is the source of truth
+
+[`marketplace.json`](marketplace.json) at the repo root is the single source of truth for the `/admin/apps` registry. It lists all 12 shippable modules with their description / category / tags / icon / provider_id / archive URL template. The schema is enforced via [`marketplace.schema.json`](marketplace.schema.json).
+
+**Adding a new module** = add a directory + add an entry to `marketplace.json` (one PR, one diff). The manifest's `default_ref` gets bumped to the latest release tag on each push of `v*`.
+
+**Manual `/admin/apps` CRUD still works** for one-offs (coming-soon placeholders, env-specific hiding, allowed_user_ids overrides). The sync endpoint preserves these by default — see [`docs/MARKETPLACE_SYNC_DESIGN.md`](docs/MARKETPLACE_SYNC_DESIGN.md) for the diff strategy.
+
 ## Cross-module docs index
 
 - [`docs/MCP_TOOL_DESCRIPTION_CONVENTION.md`](docs/MCP_TOOL_DESCRIPTION_CONVENTION.md) — how every tool's description / inputSchema / outputSchema / annotations / errors must read
 - [`docs/MCP_RECIPES.md`](docs/MCP_RECIPES.md) — multi-tool workflow recipes the agent uses
 - [`docs/APP_DEVELOPMENT_GUIDE.md`](docs/APP_DEVELOPMENT_GUIDE.md) — start-to-merge playbook for new modules
 - [`docs/LIVE_TESTING.md`](docs/LIVE_TESTING.md) — connecting modules to real Composio without desktop
+- [`docs/MARKETPLACE_SYNC_DESIGN.md`](docs/MARKETPLACE_SYNC_DESIGN.md) — design for the `/admin/apps` sync endpoint + button
 - [`docs/plans/`](docs/plans/) — per-module implementation plans (apollo, zoominfo, instantly, hubspot)
