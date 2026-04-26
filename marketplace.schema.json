@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Holaboss Apps Marketplace Manifest",
+  "description": "Single source of truth for the holaboss admin app registry. Synced into the marketplace via POST /api/v1/marketplace/admin/apps/sync. See docs/MARKETPLACE_SYNC_DESIGN.md.",
+  "type": "object",
+  "required": ["version", "repo", "default_ref", "archive_url_template", "apps"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Manifest schema version. Bumped only when the manifest contract itself changes.",
+      "const": 1
+    },
+    "repo": {
+      "type": "string",
+      "description": "GitHub <owner>/<repo> hosting the release archives.",
+      "pattern": "^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$"
+    },
+    "default_ref": {
+      "type": "string",
+      "description": "Git ref (tag or branch) used when no per-app override is set. Updated each release."
+    },
+    "archive_url_template": {
+      "type": "string",
+      "description": "URL template with {ref}, {name}, {target} placeholders. Sandbox runtime substitutes target at install time."
+    },
+    "apps": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/app" },
+      "minItems": 1
+    }
+  },
+  "definitions": {
+    "app": {
+      "type": "object",
+      "required": ["name", "description", "category", "path", "provider_id"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique app slug — primary key in app_registry. Matches the directory name in this repo and the MCP tool prefix.",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "maxLength": 64
+        },
+        "description": { "type": "string" },
+        "readme": {
+          "type": "string",
+          "description": "Optional Markdown shown on the marketplace detail page. If absent, the sync endpoint may pull <path>/README.md from the repo."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon identifier — frontend resolves to an SVG/image. Conventionally a lowercase brand slug."
+        },
+        "category": {
+          "type": "string",
+          "description": "Top-level group: social | productivity | crm | … Frontend filters by this."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "path": {
+          "type": "string",
+          "description": "Subdirectory inside repo where the module lives."
+        },
+        "default_ref": {
+          "type": "string",
+          "description": "Per-app override of the manifest-level default_ref. Use to pin a single app to a different tag."
+        },
+        "archive_url_template": {
+          "type": "string",
+          "description": "Per-app override of the manifest-level archive_url_template. Rare — only for apps hosted off the main release artifact stream."
+        },
+        "archive_version": {
+          "type": ["string", "null"]
+        },
+        "provider_id": {
+          "type": ["string", "null"],
+          "description": "Composio toolkit slug used by this app's bridge calls. May differ from `name` (e.g. sheets → googlesheets)."
+        },
+        "credential_source": {
+          "type": ["string", "null"],
+          "enum": ["platform", "user_provided", null]
+        },
+        "allowed_user_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "is_hidden": { "type": "boolean" },
+        "is_coming_soon": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "create-hola-app",
+  "version": "0.1.1",
+  "description": "Scaffold a new Holaboss module (TanStack Start + MCP + SQLite)",
+  "type": "module",
+  "bin": {
+    "create-hola-app": "./bin/index.js"
+  },
+  "files": [
+    "bin",
+    "template",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "prepack": "node scripts/sync-template.js"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "giget": "^1.2.3"
+  },
+  "keywords": [
+    "holaboss",
+    "create-hola-app",
+    "scaffold",
+    "tanstack-start",
+    "mcp"
+  ],
+  "license": "MIT"
+}

@@ -49,12 +49,15 @@ describe("GitHub Module E2E", () => {
   })
 
   describe("GitHub API client", () => {
-    it("rejects when no token is set", async () => {
-      const saved = process.env.PLATFORM_INTEGRATION_TOKEN
-      delete process.env.PLATFORM_INTEGRATION_TOKEN
+    it("rejects when no integration is configured (no broker grant)", async () => {
+      const savedGrant = process.env.HOLABOSS_APP_GRANT
+      const savedBroker = process.env.HOLABOSS_INTEGRATION_BROKER_URL
+      delete process.env.HOLABOSS_APP_GRANT
+      delete process.env.HOLABOSS_INTEGRATION_BROKER_URL
       const { listUserRepos } = await import("../src/server/github-api")
-      await expect(listUserRepos()).rejects.toThrow("PLATFORM_INTEGRATION_TOKEN")
-      process.env.PLATFORM_INTEGRATION_TOKEN = saved
+      await expect(listUserRepos()).rejects.toThrow(/No github integration configured/i)
+      if (savedGrant !== undefined) process.env.HOLABOSS_APP_GRANT = savedGrant
+      if (savedBroker !== undefined) process.env.HOLABOSS_INTEGRATION_BROKER_URL = savedBroker
     })
   })
 

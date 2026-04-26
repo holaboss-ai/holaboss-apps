@@ -1,0 +1,14 @@
+{
+  "name": "hola-boss-apps",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "composio:broker": "tsx scripts/composio-dev-broker.ts",
+    "composio:connect": "tsx scripts/composio-connect.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.12.1"
+}

@@ -131,13 +131,22 @@ build_module() {
 
   cd "$module_path"
 
-  # Step 1: Install (all deps, needed for build)
+  # Step 1: Install (all deps, needed for build).
+  #
+  # --ignore-workspace makes pnpm treat the current module as a standalone
+  # project even though a pnpm-workspace.yaml exists at the repo root (where
+  # we declare all 14 modules so `pnpm --filter ./<dir>` works locally).
+  # Without this flag, --frozen-lockfile fails because pnpm would expect a
+  # single root lockfile while each module ships its own pnpm-lock.yaml.
+  #
+  # We also drop the `| tail -1` pipe — it was hiding the actual install
+  # error when pnpm failed, which made CI failures opaque.
   echo "[1/4] Installing dependencies..."
   corepack enable 2>/dev/null
   if [[ -f pnpm-lock.yaml ]]; then
-    pnpm install --frozen-lockfile 2>&1 | tail -1
+    pnpm install --frozen-lockfile --ignore-workspace
   else
-    pnpm install 2>&1 | tail -1
+    pnpm install --ignore-workspace
   fi
 
   # Step 2: Build (vite + esbuild services bundle)

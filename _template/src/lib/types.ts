@@ -26,7 +26,7 @@ export interface PlatformConfig {
 
 // TODO: Replace with your module's config
 export const MODULE_CONFIG: PlatformConfig = {
-  provider: "your-nango-provider-id",
+  provider: "your-provider-id",
   destination: "your-module",
   name: "Your Module",
 }

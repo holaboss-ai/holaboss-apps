@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
     "test": "vitest run",
+    "test:live": "LIVE=1 HOLABOSS_INTEGRATION_BROKER_URL=http://localhost:3099 HOLABOSS_APP_GRANT=grant:dev:0:0 vitest run test/live.test.ts",
     "test:e2e": "vitest run test/e2e.test.ts",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx}\"",
@@ -17,6 +18,7 @@
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.2.10",
+    "@holaboss/bridge": "0.1.1-beta.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "^0.7.0",

@@ -255,6 +255,7 @@ export async function listAvailableSlotsImpl(
 }
 
 // -------------------- Registration --------------------
+// Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 
 export function registerTools(server: McpServer): void {
   const getConnectionStatus = wrapTool("calcom_get_connection_status", getConnectionStatusImpl)
@@ -268,85 +269,278 @@ export function registerTools(server: McpServer): void {
 
   const asText = (result: Result<unknown, CalcomError>) => {
     if (result.ok) {
-      return { content: [{ type: "text" as const, text: JSON.stringify(result.data) }] }
+      // structuredContent matches the tool's outputSchema (when set).
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result.data) }],
+        structuredContent: result.data as Record<string, unknown>,
+      }
     }
-    return { content: [{ type: "text" as const, text: JSON.stringify({ error: result.error }) }], isError: true as const }
+    // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
+    return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
   }
 
-  server.tool(
+  // Output shapes
+  const EventTypeSchema = z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+    length_minutes: z.number(),
+    description: z.string().nullable(),
+    booking_url: z.string(),
+    location_type: z.string().nullable(),
+  })
+  const BookingAttendeeSchema = z.object({
+    name: z.string(),
+    email: z.string(),
+    timezone: z.string().optional(),
+  })
+  const BookingSchema = z.object({
+    id: z.string(),
+    title: z.string(),
+    start_time: z.string(),
+    end_time: z.string(),
+    status: z.string(),
+    event_type_id: z.string().nullable(),
+    attendees: z.array(BookingAttendeeSchema),
+    location: z.string().nullable(),
+    meeting_url: z.string().nullable(),
+  })
+  const ToolSuccessMetaShape = {
+    calcom_object: z.string().optional(),
+    calcom_record_id: z.string().optional(),
+    calcom_deep_link: z.string().optional(),
+    result_summary: z.string().optional(),
+  }
+  const ConnectionStatusShape = {
+    connected: z.boolean(),
+    event_types_count: z.number().optional(),
+    ...ToolSuccessMetaShape,
+  }
+  const EventTypesListShape = { event_types: z.array(EventTypeSchema), ...ToolSuccessMetaShape }
+  const EventTypeOneShape = { event_type: EventTypeSchema, ...ToolSuccessMetaShape }
+  const BookingsListShape = { bookings: z.array(BookingSchema), ...ToolSuccessMetaShape }
+  const BookingOneShape = { booking: BookingSchema, ...ToolSuccessMetaShape }
+  const CancelBookingShape = { booking_id: z.string(), ...ToolSuccessMetaShape }
+  const RescheduleBookingShape = { new_booking_id: z.string(), ...ToolSuccessMetaShape }
+  const SlotsListShape = {
+    slots: z.array(z.object({ start: z.string(), end: z.string() })),
+    ...ToolSuccessMetaShape,
+  }
+
+  server.registerTool(
     "calcom_get_connection_status",
-    "Check whether Cal.com is connected for this workspace. Returns { connected, event_types_count }. If not connected, tell the user to connect Cal.com from the Holaboss integrations page.",
-    {},
+    {
+      title: "Check Cal.com connection",
+      description: `Check whether Cal.com is connected for this workspace.
+
+When to use: ALWAYS call this first if a Cal.com tool returns a not_connected error, or before suggesting Cal.com features to a user for the first time.
+Returns: { connected: true, event_types_count } if linked, { connected: false } otherwise. If false, tell the user to connect Cal.com from the Holaboss integrations page.`,
+      inputSchema: {},
+      outputSchema: ConnectionStatusShape,
+      annotations: {
+        title: "Check Cal.com connection",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
     async () => asText(await getConnectionStatus({})),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_list_event_types",
-    "List the user's Cal.com event types. Each event type has a slug, title, length in minutes, description, and a booking_url that prospects can use to self-book a meeting. Use this to discover what kinds of meetings the user offers (e.g. '30-min intro', '60-min demo') before sharing a booking URL.",
     {
-      username: z.string().optional().describe("Filter by a specific username; defaults to the connected user"),
+      title: "List event types",
+      description: `List the user's Cal.com event types — the meeting templates prospects can self-book.
+
+When to use: discover what kinds of meetings the user offers (e.g. '30-min intro', '60-min demo') before sharing a booking URL.
+Returns: array of { id, slug, title, length_minutes, description, booking_url, location_type }. booking_url is the public scheduling link to share with prospects.
+Errors: { error: { code: 'not_connected' } } if Cal.com isn't linked — call calcom_get_connection_status to confirm.`,
+      inputSchema: {
+        username: z
+          .string()
+          .optional()
+          .describe("Filter by a specific Cal.com username. Omit to use the connected workspace user."),
+      },
+      outputSchema: EventTypesListShape,
+      annotations: {
+        title: "List event types",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await listEventTypes(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_get_event_type",
-    "Fetch a single Cal.com event type by id, returning the full details including booking URL, length, and description.",
     {
-      event_type_id: z.string().describe("Cal.com event type id"),
+      title: "Get event type",
+      description: `Fetch a single Cal.com event type by id, including booking URL, length, description.
+
+Prerequisites: event_type_id from calcom_list_event_types.
+Returns: { event_type: { id, slug, title, length_minutes, description, booking_url, location_type }, calcom_deep_link }.`,
+      inputSchema: {
+        event_type_id: z.string().describe("Cal.com event type id, e.g. '12345' (from calcom_list_event_types)."),
+      },
+      outputSchema: EventTypeOneShape,
+      annotations: {
+        title: "Get event type",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await getEventType(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_list_bookings",
-    "List Cal.com bookings. Use status='upcoming' to see future meetings, 'past' for completed ones, 'cancelled' for cancellations. Filter by attendee_email to find meetings with a specific prospect.",
     {
-      status: z.enum(["upcoming", "past", "cancelled", "recurring"]).optional().describe("Filter by booking status"),
-      attendee_email: z.string().optional().describe("Filter by a specific attendee's email"),
-      limit: z.number().int().positive().max(100).optional().describe("Max results, default 20"),
+      title: "List bookings",
+      description: `List Cal.com bookings, optionally filtered by status and attendee.
+
+When to use: "what meetings do I have next week?" → status='upcoming'. "Did Bob ever book?" → attendee_email='bob@x.com'.
+Returns: array of { id, title, start_time, end_time, status, event_type_id, attendees: [{ name, email, timezone? }], location?, meeting_url? }.`,
+      inputSchema: {
+        status: z
+          .enum(["upcoming", "past", "cancelled", "recurring"])
+          .optional()
+          .describe("Filter: 'upcoming' for future meetings, 'past' for completed, 'cancelled' for cancellations."),
+        attendee_email: z
+          .string()
+          .optional()
+          .describe("Exact attendee email to filter by, e.g. 'alice@example.com'."),
+        limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
+      },
+      outputSchema: BookingsListShape,
+      annotations: {
+        title: "List bookings",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await listBookings(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_get_booking",
-    "Fetch a single Cal.com booking by id, returning start/end time, attendees, status, and meeting URL.",
     {
-      booking_id: z.string().describe("Cal.com booking id"),
+      title: "Get booking",
+      description: `Fetch a single Cal.com booking by id with attendees, status, and meeting URL.
+
+Prerequisites: booking_id from calcom_list_bookings.
+Returns: { booking: { id, title, start_time, end_time, status, attendees, location?, meeting_url? }, calcom_deep_link }.`,
+      inputSchema: {
+        booking_id: z.string().describe("Cal.com booking id (from calcom_list_bookings)."),
+      },
+      outputSchema: BookingOneShape,
+      annotations: {
+        title: "Get booking",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await getBooking(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_cancel_booking",
-    "Cancel an existing Cal.com booking. Always supply a reason — it will be sent to the attendee in the cancellation notification email.",
     {
-      booking_id: z.string().describe("Cal.com booking id to cancel"),
-      reason: z.string().optional().describe("Cancellation reason, included in attendee notification"),
+      title: "Cancel booking",
+      description: `Cancel an existing Cal.com booking. The attendee receives a cancellation notification email containing the reason.
+
+When to use: the user wants to call off a meeting that's already booked.
+Prerequisites: booking_id from calcom_list_bookings.
+Side effects: emails the attendee. Cannot be undone — to recover, ask the user to rebook from a fresh slot.
+Returns: { booking_id, calcom_deep_link, result_summary }.`,
+      inputSchema: {
+        booking_id: z.string().describe("Cal.com booking id to cancel."),
+        reason: z
+          .string()
+          .optional()
+          .describe("Reason for cancellation; included verbatim in the attendee notification. Default 'Cancelled via Holaboss'."),
+      },
+      outputSchema: CancelBookingShape,
+      annotations: {
+        title: "Cancel booking",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await cancelBooking(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_reschedule_booking",
-    "Reschedule an existing Cal.com booking to a new start time. The new_start_time must be an ISO 8601 string with an explicit timezone offset. The prospect receives a reschedule notification with the reason.",
     {
-      booking_id: z.string().describe("Cal.com booking id to reschedule"),
-      new_start_time: z.string().describe("New start time, ISO 8601 with timezone, e.g. '2026-04-21T14:00:00Z'"),
-      reason: z.string().optional().describe("Rescheduling reason, included in attendee notification"),
+      title: "Reschedule booking",
+      description: `Reschedule an existing Cal.com booking to a new start time. The attendee receives a reschedule notification email.
+
+When to use: the user wants to move an existing meeting to a different time.
+Prerequisites: booking_id from calcom_list_bookings; verify the new slot is free with calcom_list_available_slots.
+Side effects: emails the attendee with the reason. Cal.com may issue a NEW booking id; use new_booking_id from the result, not the original.
+Returns: { new_booking_id, calcom_deep_link, result_summary }.`,
+      inputSchema: {
+        booking_id: z.string().describe("Cal.com booking id to reschedule."),
+        new_start_time: z
+          .string()
+          .describe("New start time, ISO 8601 with timezone, e.g. '2026-04-21T14:00:00Z'. Must match a free slot — check calcom_list_available_slots first."),
+        reason: z
+          .string()
+          .optional()
+          .describe("Reason for the change; included verbatim in the attendee notification. Default 'Rescheduled via Holaboss'."),
+      },
+      outputSchema: RescheduleBookingShape,
+      annotations: {
+        title: "Reschedule booking",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await rescheduleBooking(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "calcom_list_available_slots",
-    "List available time slots for an event type within a date range. Use this to answer 'when am I free next week for a 30-min intro?' before sharing a booking URL.",
     {
-      event_type_id: z.string().describe("Event type id to check availability for"),
-      start_date: z.string().describe("Start of range, ISO 8601 (e.g. '2026-04-20' or '2026-04-20T00:00:00Z')"),
-      end_date: z.string().describe("End of range, ISO 8601"),
-      timezone: z.string().optional().describe("IANA timezone for slot times, e.g. 'America/New_York'"),
+      title: "List available slots",
+      description: `List available time slots for an event type within a date range.
+
+When to use: answer "when am I free next week for a 30-min intro?" before sharing a booking URL or before calling calcom_reschedule_booking.
+Prerequisites: event_type_id from calcom_list_event_types.
+Returns: { slots: [{ start, end }] } in ISO 8601. Empty array means no availability — widen the date range or relax timezone.`,
+      inputSchema: {
+        event_type_id: z.string().describe("Event type id to check availability for (from calcom_list_event_types)."),
+        start_date: z
+          .string()
+          .describe("Start of range, ISO 8601, e.g. '2026-04-20' or '2026-04-20T00:00:00Z'."),
+        end_date: z.string().describe("End of range, ISO 8601, e.g. '2026-04-27'."),
+        timezone: z
+          .string()
+          .optional()
+          .describe("IANA timezone for slot times, e.g. 'America/New_York' or 'Europe/Berlin'."),
+      },
+      outputSchema: SlotsListShape,
+      annotations: {
+        title: "List available slots",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
     async (args) => asText(await listAvailableSlots(args)),
   )

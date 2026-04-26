@@ -1,0 +1,40 @@
+app_id: "apollo-module"
+name: "Apollo"
+slug: "apollo"
+
+lifecycle:
+  setup: "corepack enable && pnpm install && pnpm run build && pnpm prune --prod"
+  start: "DB_PATH=./data/apollo.db nohup node .output/server/index.mjs > /tmp/apollo-module.log 2>&1 & DB_PATH=./data/apollo.db nohup node .output/start-services.cjs > /tmp/apollo-module-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - "apollo_get_connection_status"
+    - "apollo_search_people"
+    - "apollo_get_person"
+    - "apollo_enrich_person"
+    - "apollo_search_organizations"
+    - "apollo_get_organization"
+    - "apollo_list_sequences"
+    - "apollo_add_to_sequence"
+    - "apollo_remove_from_sequence"
+    - "apollo_list_emails_sent"
+
+integration:
+  destination: "apollo"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_APP_GRANT"
+  - "HOLABOSS_INTEGRATION_BROKER_URL"
+  - "HOLABOSS_FRONTEND_URL"

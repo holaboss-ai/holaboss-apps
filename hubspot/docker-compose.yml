@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8080
+      MCP_PORT: 3099
+      DB_PATH: /app/data/hubspot.db
+      HOLABOSS_APP_GRANT: ${HOLABOSS_APP_GRANT:-}
+      HOLABOSS_INTEGRATION_BROKER_URL: ${HOLABOSS_INTEGRATION_BROKER_URL:-}
+      HOLABOSS_FRONTEND_URL: ${HOLABOSS_FRONTEND_URL:-}
+    ports:
+      - "8080:8080"
+      - "3099:3099"
+    volumes:
+      - module-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/health >/dev/null && wget -qO- http://127.0.0.1:3099/mcp/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  module-data:

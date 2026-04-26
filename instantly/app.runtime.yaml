@@ -1,0 +1,41 @@
+app_id: "instantly-module"
+name: "Instantly"
+slug: "instantly"
+
+lifecycle:
+  setup: "corepack enable && pnpm install && pnpm run build && pnpm prune --prod"
+  start: "DB_PATH=./data/instantly.db nohup node .output/server/index.mjs > /tmp/instantly-module.log 2>&1 & DB_PATH=./data/instantly.db nohup node .output/start-services.cjs > /tmp/instantly-module-services.log 2>&1 &"
+  stop: "kill $(lsof -t -i :${PORT:-3000} 2>/dev/null) 2>/dev/null || true; kill $(lsof -t -i :${MCP_PORT:-3099} 2>/dev/null) 2>/dev/null || true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 30
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - "instantly_get_connection_status"
+    - "instantly_list_campaigns"
+    - "instantly_get_campaign"
+    - "instantly_create_campaign"
+    - "instantly_pause_campaign"
+    - "instantly_resume_campaign"
+    - "instantly_list_leads"
+    - "instantly_add_lead_to_campaign"
+    - "instantly_remove_lead_from_campaign"
+    - "instantly_get_campaign_stats"
+    - "instantly_send_test_email"
+
+integration:
+  destination: "instantly"
+  credential_source: "platform"
+  holaboss_user_id_required: true
+
+env_contract:
+  - "HOLABOSS_APP_GRANT"
+  - "HOLABOSS_INTEGRATION_BROKER_URL"
+  - "HOLABOSS_FRONTEND_URL"
