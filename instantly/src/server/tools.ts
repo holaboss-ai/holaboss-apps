@@ -719,8 +719,11 @@ export async function getCampaignStatsImpl(
     InstantlyError
   >
 > {
-  const r = await apiGet<Record<string, unknown>>(
-    `/campaigns/${encodeURIComponent(input.campaign_id)}/analytics`,
+  // Instantly v2 analytics endpoint shape (verified 2026-04 against the live
+  // API): /campaigns/analytics with the campaign_id passed as a query param,
+  // NOT /campaigns/<id>/analytics. Wrong path returns 404 "Route ... not found".
+  const r = await apiGet<Record<string, unknown> | Array<Record<string, unknown>>>(
+    `/campaigns/analytics?id=${encodeURIComponent(input.campaign_id)}`,
   )
   if (!r.ok) return r
   if (!r.data || typeof r.data !== "object") {
