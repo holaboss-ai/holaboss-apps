@@ -452,6 +452,66 @@ export async function addToListImpl(
   }
 }
 
+// Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
+const asText = (result: Result<unknown, AttioError>) => {
+  if (result.ok) {
+    // structuredContent matches the tool's outputSchema (when set).
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result.data) }],
+      structuredContent: result.data as Record<string, unknown>,
+    }
+  }
+  // Flat error envelope per docs/MCP_TOOL_DESCRIPTION_CONVENTION.md §"Errors".
+  return { content: [{ type: "text" as const, text: JSON.stringify(result.error) }], isError: true as const }
+}
+
+// Output shapes (MCP outputSchema). Attio attribute payloads are dynamic
+// per workspace, so record-shaped fields use z.record(z.unknown()).
+const ToolSuccessMetaShape = {
+  attio_object: z.string().optional(),
+  attio_record_id: z.string().optional(),
+  attio_deep_link: z.string().optional(),
+  result_summary: z.string().optional(),
+}
+const RecordRefSchema = z.record(z.string(), z.unknown())
+const SchemaAttributeSchema = z.object({
+  slug: z.string(),
+  title: z.string(),
+  type: z.string(),
+  is_required: z.boolean(),
+  is_unique: z.boolean(),
+  options: z.unknown().optional(),
+})
+const SchemaObjectSchema = z.object({
+  slug: z.string(),
+  plural_name: z.string(),
+  attributes: z.array(SchemaAttributeSchema),
+})
+const ConnectionStatusShape = {
+  connected: z.boolean(),
+  workspace_name: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const DescribeSchemaShape = { objects: z.array(SchemaObjectSchema), ...ToolSuccessMetaShape }
+const PeopleListShape = { records: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const CompaniesListShape = { records: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const PersonOneShape = { record: RecordRefSchema, ...ToolSuccessMetaShape }
+const RecordIdShape = {
+  record_id: z.string(),
+  record_url: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const NoteIdShape = {
+  note_id: z.string(),
+  note_url: z.string().optional(),
+  ...ToolSuccessMetaShape,
+}
+const LinkResultShape = { ok: z.literal(true), ...ToolSuccessMetaShape }
+const TaskIdShape = { task_id: z.string(), ...ToolSuccessMetaShape }
+const TasksListShape = { tasks: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const ListEntriesShape = { entries: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
+const ListEntryShape = { entry_id: z.string(), ...ToolSuccessMetaShape }
+
 export function registerTools(server: McpServer): void {
   const findPeople = wrapTool("attio_find_people", findPeopleImpl)
   const getPerson = wrapTool("attio_get_person", getPersonImpl)
@@ -466,157 +526,399 @@ export function registerTools(server: McpServer): void {
   const listRecordsInList = wrapTool("attio_list_records_in_list", listRecordsInListImpl)
   const addToList = wrapTool("attio_add_to_list", addToListImpl)
 
-  server.tool(
+  server.registerTool(
     "attio_describe_schema",
-    "Describe Attio workspace schema — returns objects and their attributes (including custom ones). Call this before creating or updating records to learn the available fields. Defaults to [people, companies, deals]; pass objects to explore others.",
     {
-      objects: z.array(z.string()).optional().describe("Object slugs to describe, e.g. ['people','companies','deals']"),
+      title: "Describe Attio schema",
+      description: `Describe the Attio workspace's objects and their attributes (including custom fields).
+
+When to use: ALWAYS call this before attio_create_person / attio_create_company / attio_update_person to learn the workspace's actual attribute slugs — schema differs per workspace.
+Returns: { objects: [{ api_slug, name, attributes: [{ api_slug, type, is_required, is_multiselect, options? }] }] }. Default scope is [people, companies, deals]; pass objects to explore others.`,
+      inputSchema: {
+        objects: z
+          .array(z.string())
+          .optional()
+          .describe("Object api_slugs to describe, e.g. ['people','companies','deals','workspaces']."),
+      },
+      outputSchema: DescribeSchemaShape,
+      annotations: {
+        title: "Describe Attio schema",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async ({ objects }) => {
-      const r = await describeSchemaImpl({ objects })
-      return { content: [{ type: "text" as const, text: JSON.stringify(r) }] }
-    },
+    async ({ objects }) => asText(await describeSchemaImpl({ objects })),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_get_connection_status",
-    "Check whether Attio is connected for this workspace. Returns { connected, workspace_name }. If not connected, tell the user to connect Attio from the Holaboss integrations page.",
-    {},
-    async () => {
-      const r = await getConnectionStatusImpl({})
-      return { content: [{ type: "text" as const, text: JSON.stringify(r) }] }
+    {
+      title: "Check Attio connection",
+      description: `Check whether Attio is connected for this workspace.
+
+When to use: ALWAYS call this first if any Attio tool returns a not_connected error, or before suggesting Attio features for the first time.
+Returns: { connected: true, workspace_name } if linked, { connected: false } otherwise. If false, tell the user to connect Attio from the Holaboss integrations page.`,
+      inputSchema: {},
+      outputSchema: ConnectionStatusShape,
+      annotations: {
+        title: "Check Attio connection",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
+    async () => asText(await getConnectionStatusImpl({})),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_find_people",
-    "Search for people in Attio by name or email (fuzzy contains match). Returns up to limit records. Use this before creating a person to avoid duplicates.",
     {
-      query: z.string().describe("Name fragment or email substring to search for"),
-      limit: z.number().int().positive().max(100).optional().describe("Max results, default 20"),
+      title: "Find people",
+      description: `Search Attio people by name or email (fuzzy contains match).
+
+When to use: ALWAYS call this before attio_create_person to avoid duplicates.
+Returns: array of person records, each with record_id and attribute values.`,
+      inputSchema: {
+        query: z
+          .string()
+          .describe("Name fragment or email substring, e.g. 'alice' or 'acme.com'. Case-insensitive contains match."),
+        limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
+      },
+      outputSchema: PeopleListShape,
+      annotations: {
+        title: "Find people",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await findPeople(args)) }] }),
+    async (args) => asText(await findPeople(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_get_person",
-    "Fetch a single Attio person by record_id, returning all attribute values.",
     {
-      record_id: z.string().describe("Attio person record id"),
+      title: "Get person",
+      description: `Fetch a single Attio person by record_id with all attribute values.
+
+Prerequisites: record_id from attio_find_people.
+Returns: full person record with attribute slugs as keys.`,
+      inputSchema: {
+        record_id: z.string().describe("Attio person record id (from attio_find_people)."),
+      },
+      outputSchema: PersonOneShape,
+      annotations: {
+        title: "Get person",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await getPerson(args)) }] }),
+    async (args) => asText(await getPerson(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_create_person",
-    "Create a new person in Attio. Pass attributes as a map of {attribute_slug: value}. Call attio_describe_schema first to learn the available attributes (including custom ones). Attio validates fields on the server — 4xx errors come back as validation_failed with a message explaining what's wrong.",
     {
-      attributes: z.record(z.string(), z.unknown()).describe("Map of attribute_slug → value, e.g. { name: 'Alice', email_addresses: ['a@b.com'] }"),
+      title: "Create person",
+      description: `Create a new person in Attio.
+
+When to use: after attio_find_people confirms the person doesn't already exist.
+Prerequisites: call attio_describe_schema first to learn this workspace's attribute slugs (especially custom fields).
+Returns: { record_id, ... } of the created person.
+Errors: { code: 'validation_failed', message } if Attio rejects the payload — usually a missing required field or wrong attribute type.`,
+      inputSchema: {
+        attributes: z
+          .record(z.string(), z.unknown())
+          .describe(
+            "Map of attribute_slug → value, e.g. { name: 'Alice', email_addresses: ['a@b.com'], job_title: 'CTO' }. Slugs come from attio_describe_schema.",
+          ),
+      },
+      outputSchema: RecordIdShape,
+      annotations: {
+        title: "Create person",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createPerson(args)) }] }),
+    async (args) => asText(await createPerson(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_update_person",
-    "Patch an existing Attio person. Only the supplied attributes are modified; omitted fields remain unchanged.",
     {
-      record_id: z.string().describe("Attio person record id"),
-      attributes: z.record(z.string(), z.unknown()).describe("Map of attribute_slug → new value"),
+      title: "Update person",
+      description: `Patch an existing Attio person. Only the supplied attributes change; omitted fields remain unchanged.
+
+Prerequisites: record_id from attio_find_people; attribute slugs from attio_describe_schema.
+Returns: updated person record.
+Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
+      inputSchema: {
+        record_id: z.string().describe("Attio person record id (from attio_find_people)."),
+        attributes: z
+          .record(z.string(), z.unknown())
+          .describe(
+            "Map of attribute_slug → new value, e.g. { job_title: 'VP Engineering' }. Only listed slugs are modified.",
+          ),
+      },
+      outputSchema: RecordIdShape,
+      annotations: {
+        title: "Update person",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await updatePerson(args)) }] }),
+    async (args) => asText(await updatePerson(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_find_companies",
-    "Search for companies in Attio by name or domain. Returns up to limit records.",
     {
-      query: z.string().describe("Name fragment or domain substring"),
-      limit: z.number().int().positive().max(100).optional().describe("Max results, default 20"),
+      title: "Find companies",
+      description: `Search Attio companies by name or domain (fuzzy contains match).
+
+When to use: ALWAYS call this before attio_create_company to avoid duplicates.
+Returns: array of company records, each with record_id and attribute values.`,
+      inputSchema: {
+        query: z
+          .string()
+          .describe("Name fragment or domain substring, e.g. 'acme' or 'acme.com'. Case-insensitive contains match."),
+        limit: z.number().int().positive().max(100).optional().describe("Max results, default 20, max 100."),
+      },
+      outputSchema: CompaniesListShape,
+      annotations: {
+        title: "Find companies",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await findCompanies(args)) }] }),
+    async (args) => asText(await findCompanies(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_create_company",
-    "Create a new company in Attio. Pass attributes as a map of {attribute_slug: value}. Call attio_describe_schema first to learn the workspace's fields.",
     {
-      attributes: z.record(z.string(), z.unknown()).describe("Map of attribute_slug → value, e.g. { name: 'Acme', domains: ['acme.com'] }"),
+      title: "Create company",
+      description: `Create a new company in Attio.
+
+When to use: after attio_find_companies confirms the company doesn't already exist.
+Prerequisites: call attio_describe_schema first to learn this workspace's attribute slugs.
+Returns: { record_id, ... } of the created company.
+Errors: { code: 'validation_failed', message } if Attio rejects the payload.`,
+      inputSchema: {
+        attributes: z
+          .record(z.string(), z.unknown())
+          .describe(
+            "Map of attribute_slug → value, e.g. { name: 'Acme', domains: ['acme.com'], industry: 'Software' }. Slugs come from attio_describe_schema.",
+          ),
+      },
+      outputSchema: RecordIdShape,
+      annotations: {
+        title: "Create company",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createCompany(args)) }] }),
+    async (args) => asText(await createCompany(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_link_person_to_company",
-    "Attach an existing person to an existing company by setting the person's 'company' reference attribute. Use this after creating or finding both records.",
     {
-      person_id: z.string().describe("Attio person record id"),
-      company_id: z.string().describe("Attio company record id"),
+      title: "Link person to company",
+      description: `Attach an existing person to an existing company by setting the person's 'company' reference attribute.
+
+When to use: after creating or finding BOTH records, to wire them together.
+Prerequisites: person_id from attio_find_people / attio_create_person; company_id from attio_find_companies / attio_create_company.
+Returns: updated person record showing the new company link.`,
+      inputSchema: {
+        person_id: z.string().describe("Attio person record id."),
+        company_id: z.string().describe("Attio company record id."),
+      },
+      outputSchema: LinkResultShape,
+      annotations: {
+        title: "Link person to company",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await linkPersonToCompany(args)) }] }),
+    async (args) => asText(await linkPersonToCompany(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_add_note",
-    "Attach a plaintext note to an Attio record (person, company, or deal). Use parent_object='people' for a person, 'companies' for a company, 'deals' for a deal. The note will appear in the record's timeline in Attio's UI.",
     {
-      parent_object: z.enum(["people", "companies", "deals"]).describe("The type of record to attach the note to"),
-      parent_record_id: z.string().describe("The record id to attach the note to"),
-      title: z.string().describe("Note title"),
-      content: z.string().describe("Note body (plaintext)"),
+      title: "Add note",
+      description: `Attach a plaintext note to an Attio record. The note appears in the record's timeline in the Attio UI.
+
+When to use: log meeting summaries, follow-up details, or any free-form context against a person/company/deal.
+Prerequisites: parent_record_id from attio_find_people / attio_find_companies (or the relevant deals tool).
+Returns: { note_id, ... } of the created note.`,
+      inputSchema: {
+        parent_object: z
+          .enum(["people", "companies", "deals"])
+          .describe("Record type the note is attached to."),
+        parent_record_id: z.string().describe("Attio record id (person/company/deal) to attach the note to."),
+        title: z.string().describe("Note title (single line)."),
+        content: z.string().describe("Note body in plaintext (no Markdown rendering in Attio's timeline)."),
+      },
+      outputSchema: NoteIdShape,
+      annotations: {
+        title: "Add note",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await addNote(args)) }] }),
+    async (args) => asText(await addNote(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_create_task",
-    "Create an Attio task (to-do). deadline_at must be an ISO 8601 string with an explicit timezone offset, e.g. '2026-04-20T10:00:00Z' or '2026-04-20T10:00:00-05:00'. linked_records attaches the task to one or more records.",
     {
-      content: z.string().describe("Task description"),
-      deadline_at: z.string().optional().describe("ISO 8601 deadline with timezone, e.g. '2026-04-20T10:00:00Z'"),
-      assignee: z.string().optional().describe("Workspace member id to assign"),
-      linked_records: z
-        .array(z.object({ object: z.string(), record_id: z.string() }))
-        .optional()
-        .describe("Records to link this task to, e.g. [{ object: 'people', record_id: 'rec_1' }]"),
+      title: "Create task",
+      description: `Create an Attio task (to-do), optionally with a deadline, assignee, and links to related records.
+
+When to use: capture an action item — "follow up with Alice next Monday" — that needs to surface in someone's task list.
+Returns: { task_id, ... } of the created task.`,
+      inputSchema: {
+        content: z.string().describe("Task description, e.g. 'Send Q2 proposal'."),
+        deadline_at: z
+          .string()
+          .optional()
+          .describe(
+            "ISO 8601 deadline with explicit timezone offset, e.g. '2026-04-20T10:00:00Z' or '2026-04-20T10:00:00-05:00'.",
+          ),
+        assignee: z
+          .string()
+          .optional()
+          .describe("Attio workspace member id to assign. Omit to leave unassigned."),
+        linked_records: z
+          .array(z.object({ object: z.string(), record_id: z.string() }))
+          .optional()
+          .describe(
+            "Records to link this task to, e.g. [{ object: 'people', record_id: 'rec_1' }, { object: 'companies', record_id: 'rec_2' }].",
+          ),
+      },
+      outputSchema: TaskIdShape,
+      annotations: {
+        title: "Create task",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await createTask(args)) }] }),
+    async (args) => asText(await createTask(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_list_tasks",
-    "List Attio tasks, optionally filtered by assignee, status (open/completed), or a linked record.",
     {
-      filter: z
-        .object({
-          assignee: z.string().optional(),
-          status: z.enum(["open", "completed"]).optional(),
-          linked_record: z.object({ object: z.string(), record_id: z.string() }).optional(),
-        })
-        .optional(),
-      limit: z.number().int().positive().max(200).optional().describe("Max results, default 50"),
+      title: "List tasks",
+      description: `List Attio tasks, optionally filtered by assignee, status, or a linked record.
+
+When to use: "what's open for me?" → filter.assignee. "What's outstanding for Acme?" → filter.linked_record.
+Returns: array of tasks with content, deadline_at, status, assignee, linked_records.`,
+      inputSchema: {
+        filter: z
+          .object({
+            assignee: z.string().optional().describe("Workspace member id to scope to."),
+            status: z.enum(["open", "completed"]).optional().describe("Task lifecycle state."),
+            linked_record: z
+              .object({ object: z.string(), record_id: z.string() })
+              .optional()
+              .describe("Record the task is linked to, e.g. { object: 'people', record_id: 'rec_1' }."),
+          })
+          .optional()
+          .describe("Optional combined filter. Omit to list all."),
+        limit: z.number().int().positive().max(200).optional().describe("Max results, default 50, max 200."),
+      },
+      outputSchema: TasksListShape,
+      annotations: {
+        title: "List tasks",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await listTasks(args)) }] }),
+    async (args) => asText(await listTasks(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_list_records_in_list",
-    "List all entries in an Attio List (pipeline). Each entry has its own entry_values (e.g. stage, deal value) separate from the parent record's attributes. Use this to inspect a pipeline's current state.",
     {
-      list_id: z.string().describe("Attio list id"),
-      limit: z.number().int().positive().max(200).optional().describe("Max entries, default 50"),
+      title: "List records in pipeline",
+      description: `List all entries in an Attio List (a.k.a. pipeline). Each entry has its OWN entry_values (e.g. stage, deal value) separate from the parent record's attributes.
+
+When to use: inspect a pipeline's current state — e.g. who's in 'Q2 Sales' and what stage they're at.
+Returns: array of { entry_id, parent_record_id, parent_object, entry_values: { stage, deal_value, ... } }.`,
+      inputSchema: {
+        list_id: z.string().describe("Attio list id (find via the Attio UI's list URL)."),
+        limit: z.number().int().positive().max(200).optional().describe("Max entries, default 50, max 200."),
+      },
+      outputSchema: ListEntriesShape,
+      annotations: {
+        title: "List records in pipeline",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await listRecordsInList(args)) }] }),
+    async (args) => asText(await listRecordsInList(args)),
   )
 
-  server.tool(
+  server.registerTool(
     "attio_add_to_list",
-    "Add a record to an Attio List, OR update its stage/entry_values if it is already in the list. This tool merges the 'add' and 'move stage' operations: if the record is not yet in the list, a new entry is created with the given entry_values; if it already exists, the existing entry's values are updated. entry_values are list-level attributes (stage, deal value, etc.), distinct from the parent record's attributes.",
     {
-      list_id: z.string().describe("Attio list id"),
-      record_id: z.string().describe("Attio record id of the person/company/deal to add"),
-      parent_object: z.enum(["people", "companies", "deals"]).describe("Type of the record being added"),
-      entry_values: z.record(z.string(), z.unknown()).optional().describe("List-level entry attributes (e.g. stage, deal value)"),
+      title: "Add or update list entry",
+      description: `Upsert a record into an Attio List: if the record is not yet in the list, a new entry is created with the given entry_values; if it already exists, the existing entry's values are updated.
+
+When to use: this is the SAME tool for "add to pipeline" AND "move to next stage" — pass the new stage in entry_values either way.
+Prerequisites: record_id from attio_find_people / attio_find_companies (or deals tool); parent_object must match the record's type.
+Returns: { entry_id, parent_record_id, ... }.`,
+      inputSchema: {
+        list_id: z.string().describe("Attio list id (find via the Attio UI's list URL)."),
+        record_id: z
+          .string()
+          .describe("Attio record id of the person/company/deal to add (from attio_find_people / attio_find_companies)."),
+        parent_object: z
+          .enum(["people", "companies", "deals"])
+          .describe("Type of the record being added — must match what record_id refers to."),
+        entry_values: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "List-level entry attributes (e.g. { stage: 'qualified', deal_value: 5000 }). DISTINCT from the parent record's attributes.",
+          ),
+      },
+      outputSchema: ListEntryShape,
+      annotations: {
+        title: "Add or update list entry",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
     },
-    async (args) => ({ content: [{ type: "text" as const, text: JSON.stringify(await addToList(args)) }] }),
+    async (args) => asText(await addToList(args)),
   )
 }
