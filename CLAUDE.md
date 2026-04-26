@@ -124,6 +124,60 @@ All tools are module-prefixed snake_case: `twitter_create_post`, `linkedin_list_
 
 Use `server.registerTool(name, { title, description, inputSchema, annotations }, handler)`. The legacy `server.tool(...)` overload is deprecated (`@modelcontextprotocol/sdk ≥ 1.27`).
 
+### Auth + integration broker — `@holaboss/bridge` SDK (mandatory)
+
+Modules NEVER hold raw third-party credentials, tokens, or JWTs. All provider API calls go through the Holaboss broker via `@holaboss/bridge`'s `createIntegrationClient(<provider>).proxy(...)`. The broker fronts **Composio** (`https://backend.composio.dev`), which holds the connected accounts and injects auth headers server-side.
+
+Non-negotiable rules:
+
+- The shim file in every module is `src/server/holaboss-bridge.ts` — exactly 36 lines, re-exports from `@holaboss/bridge`. **Do NOT hand-roll bridge logic.** If something is missing from the SDK, fix it upstream in `@holaboss/bridge`, never inline.
+- Each module's `<svc>-client.ts` calls `createIntegrationClient("<provider-slug>")` and routes ALL data calls through `client.proxy({ method, endpoint, body })`. The endpoint is the full provider URL (e.g. `https://api.attio.com/v2/objects/people/records/query`). The broker prepends auth.
+- Status mapping inside each module's client converts the proxy's `{ data, status, headers }` result to the canonical structured-error envelope: `{ code: "not_found"|"invalid_state"|"validation_failed"|"not_connected"|"rate_limited"|"upstream_error"|"internal", message, ...extra }`. See `docs/MCP_TOOL_DESCRIPTION_CONVENTION.md` §"Errors".
+
+The runtime supplies `HOLABOSS_INTEGRATION_BROKER_URL` + `HOLABOSS_APP_GRANT` via env. Locally for testing, those point at the dev broker (next section).
+
+### Live testing without desktop — `composio-dev-broker`
+
+The repo ships a self-contained dev broker so you can exercise modules against real Composio + real third-party APIs WITHOUT booting the Holaboss desktop app or the in-sandbox runtime. See [`docs/LIVE_TESTING.md`](docs/LIVE_TESTING.md) for the full how-to.
+
+5-step setup:
+
+```bash
+# 1. (root) install root tools
+pnpm install
+
+# 2. (terminal A — leave running) start the broker on :3099
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:broker
+
+# 3. (terminal B) connect each provider once.
+#    Composio-managed (most consumer toolkits — gmail, github, googlesheets):
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect gmail
+#    B2B toolkits without managed creds need --api-key / --oauth-client-id+secret /
+#    --credentials-json. The CLI auto-detects the auth scheme from credential
+#    field names (api_key → API_KEY, client_id+client_secret → OAUTH2, etc.).
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect apollo --api-key apollo_xxx
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect attio  --api-key attio_xxx
+COMPOSIO_API_KEY=cmp_xxx pnpm composio:connect instantly --api-key inst_xxx
+
+# 4. run a module's live tests (path filter — see workspace section below)
+pnpm --filter ./apollo run test:live
+pnpm --filter ./hubspot run test:live
+```
+
+`.composio-connections.json` holds `{ <toolkit-slug>: <connected_account_id> }`, gitignored. The broker reads it on every request — no restart needed when you connect a new provider.
+
+Each module has `test/live.test.ts` that's `describe.skipIf(!process.env.LIVE)` so it's a no-op in the regular `pnpm test` run. Live tests assert on shape only (never on data values, since the user's account contents drift). Writes are gated behind `LIVE_WRITE=1`; gmail-send and calcom-cancel are intentionally NOT wired into `LIVE_WRITE` (too easy to misuse from a test runner).
+
+When a third-party plan-tier rejects a call (e.g. Apollo free plan blocks `/mixed_people/search`), the live test recognizes the message family and treats it as `[live] <tool>: SKIPPED — <provider> plan limit: ...` instead of failing — so the suite stays green on free-tier accounts.
+
+### pnpm workspace
+
+`pnpm-workspace.yaml` declares all 14 modules. From the repo root:
+
+- **Path filter (recommended):** `pnpm --filter ./<dir> run <script>` (e.g. `pnpm --filter ./hubspot run test:live`).
+- Filter by package name does NOT work with the bare directory name — every package's `name` field is `<dir>-module` (e.g. `hubspot-module`), so `pnpm --filter hubspot ...` returns "no projects matched". Use `./<dir>` (path) or `<dir>-module` (full name).
+- `cd <dir> && pnpm <script>` always works regardless of filter syntax.
+
 ## Creating a New Module
 
 1. `cp -r _template/ <your-module>/`
@@ -162,8 +216,18 @@ Modules are deployed into Holaboss sandbox containers via `app.runtime.yaml`. Th
 
 - **No shared packages** — each module is fully self-contained; copy-paste is preferred over abstraction
 - **MCP descriptions follow [`docs/MCP_TOOL_DESCRIPTION_CONVENTION.md`](docs/MCP_TOOL_DESCRIPTION_CONVENTION.md)** — non-negotiable
+- **`@holaboss/bridge` SDK is mandatory** — no hand-rolled credential / JWT / broker URL logic in any module. All provider calls go through `createIntegrationClient(<slug>).proxy(...)`. The bridge talks to Composio; Nango is NOT used.
+- **Composio toolkit slugs** for connect: `gmail`, `github`, `googlesheets`, `linkedin`, `twitter`, `reddit` are managed (no creds needed); `apollo`, `instantly`, `attio`, `calcom`, `zoominfo`, `hubspot` typically need custom credentials passed via `pnpm composio:connect`.
 - **OKLch colors** — all theme colors use OKLch color space with CSS variables
 - **Server functions** — use `createServerFn` from `@tanstack/react-start` for mutations
 - **File-based routing** — `routeTree.gen.ts` auto-generates; don't edit manually
 - **Biome-style linting** — no TypeScript enums, use `import type`, `for...of` over `.forEach`
 - **SQLite only** — no external dependencies (Redis, Postgres, etc.) inside a module
+
+## Cross-module docs index
+
+- [`docs/MCP_TOOL_DESCRIPTION_CONVENTION.md`](docs/MCP_TOOL_DESCRIPTION_CONVENTION.md) — how every tool's description / inputSchema / outputSchema / annotations / errors must read
+- [`docs/MCP_RECIPES.md`](docs/MCP_RECIPES.md) — multi-tool workflow recipes the agent uses
+- [`docs/APP_DEVELOPMENT_GUIDE.md`](docs/APP_DEVELOPMENT_GUIDE.md) — start-to-merge playbook for new modules
+- [`docs/LIVE_TESTING.md`](docs/LIVE_TESTING.md) — connecting modules to real Composio without desktop
+- [`docs/plans/`](docs/plans/) — per-module implementation plans (apollo, zoominfo, instantly, hubspot)
