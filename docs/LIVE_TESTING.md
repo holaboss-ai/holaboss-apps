@@ -90,13 +90,17 @@ without re-prompting.
 ## Run
 
 ```bash
-# In the module directory:
+# In the module directory (simplest):
 cd apollo/
 pnpm test:live
 
-# … or from repo root:
-pnpm --filter apollo run test:live
+# … or from repo root with a path filter:
+pnpm --filter ./apollo run test:live
 ```
+
+Note: `pnpm --filter apollo run test:live` (no `./`) does **not** work because
+each package's name in package.json is `<dir>-module` (e.g. `apollo-module`),
+not `apollo`. Use the path filter `./<dir>` or `cd` into the module.
 
 That sets `HOLABOSS_INTEGRATION_BROKER_URL=http://localhost:3099` +
 `HOLABOSS_APP_GRANT=grant:dev:0:0` and runs `vitest test/live.test.ts`.

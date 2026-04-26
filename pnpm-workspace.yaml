@@ -1,2 +1,21 @@
+packages:
+  - "_template"
+  - "apollo"
+  - "attio"
+  - "calcom"
+  - "create-hola-app"
+  - "github"
+  - "gmail"
+  - "hubspot"
+  - "instantly"
+  - "linkedin"
+  - "reddit"
+  - "sheets"
+  - "twitter"
+  - "zoominfo"
+
 onlyBuiltDependencies:
   - esbuild
+  - better-sqlite3
+  - msw
+  - unrs-resolver
