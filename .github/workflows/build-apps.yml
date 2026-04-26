@@ -25,7 +25,7 @@ jobs:
       - name: Resolve build matrix
         id: resolve
         env:
-          ALL_MODULES: "twitter,linkedin,reddit,gmail,github,sheets"
+          ALL_MODULES: "twitter,linkedin,reddit,gmail,github,sheets,calcom,attio,apollo,zoominfo,instantly,hubspot"
           ALL_TARGETS: "linux-x64,darwin-arm64,win32-x64"
         run: |
           MODULES="${{ inputs.modules || 'all' }}"
