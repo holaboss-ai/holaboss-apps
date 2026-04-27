@@ -9,7 +9,7 @@ import {
 } from "../../src/server/dm"
 import { MockBridge } from "../fixtures/mock-bridge"
 
-const X_BASE = "https://api.twitter.com/2"
+const X_BASE = "https://api.x.com/2"
 
 describe("twitter dm — sendDirectMessage", () => {
   let bridge: MockBridge

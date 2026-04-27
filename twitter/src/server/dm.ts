@@ -20,7 +20,10 @@
  */
 import { createIntegrationClient } from "./holaboss-bridge"
 
-const X_API_BASE = "https://api.twitter.com/2"
+// Composio's twitter toolkit only allow-lists `api.x.com` for proxied requests.
+// `api.twitter.com` still works on X's side but the broker rejects it before
+// the request leaves Composio, so use the canonical post-rebrand domain.
+const X_API_BASE = "https://api.x.com/2"
 
 // Hard cap on a single DM body. Practical limit X enforces for v2 DMs is
 // 10,000 characters; hitting the boundary trips a 400 from X. Validate

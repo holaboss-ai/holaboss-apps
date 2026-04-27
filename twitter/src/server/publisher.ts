@@ -1,6 +1,9 @@
 import { createIntegrationClient } from "./holaboss-bridge"
 
-const TWITTER_API = "https://api.twitter.com/2"
+// Composio's twitter toolkit only allow-lists `api.x.com` for proxied requests
+// post-rebrand. `api.twitter.com` is rejected by the broker even though X
+// still serves it. Use the canonical domain.
+const TWITTER_API = "https://api.x.com/2"
 const twitter = createIntegrationClient("twitter")
 
 export interface PublishInput {
