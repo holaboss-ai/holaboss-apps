@@ -12,7 +12,7 @@ import {
   resolveHolabossTurnContext,
   updateAppOutput,
 } from "./holaboss-bridge"
-import { listDirectMessages, sendDirectMessage } from "./dm"
+import { listDirectMessages, listRecentDmEvents, sendDirectMessage } from "./dm"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
@@ -85,6 +85,23 @@ const ListDmsResultShape = {
     .string()
     .optional()
     .describe("Pass back as `pagination_token` on the next call to fetch the next page. Absent on last page."),
+}
+
+const DmEventEnrichedShape = z.object({
+  dm_event_id: z.string(),
+  dm_conversation_id: z.string(),
+  event_type: z.string(),
+  text: z.string().optional(),
+  sender_id: z.string().optional(),
+  sender_handle: z.string().optional().describe("X handle without '@', e.g. 'joshua'. Inlined from X's users include — no follow-up lookup needed."),
+  sender_name: z.string().optional().describe("Display name, e.g. 'Joshua A'."),
+  created_at: z.string().optional(),
+})
+
+const ListRecentDmEventsResultShape = {
+  messages: z.array(DmEventEnrichedShape),
+  result_count: z.number(),
+  next_pagination_token: z.string().optional(),
 }
 
 async function syncAndPersist(
@@ -514,6 +531,54 @@ Errors: { code: 'validation_failed' } when participant_id is empty. { code: 'not
     },
     async ({ participant_id, max_results, pagination_token }) => {
       const result = await listDirectMessages({ participant_id, max_results, pagination_token })
+      if (!result.ok) {
+        const extra: Record<string, unknown> = {}
+        if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after
+        return errCode(result.error.code, result.error.message, extra)
+      }
+      return success(result.data as unknown as Record<string, unknown>)
+    },
+  )
+
+  server.registerTool(
+    "twitter_list_recent_dm_events",
+    {
+      title: "List recent DM events across all conversations",
+      description: `List recent DM events from the connected X account's inbox — across every conversation, not scoped to a single recipient. Each event includes the sender's handle and display name inlined (no follow-up user lookup needed).
+
+When to use: the agent should discover whose DMs need attention without you needing to specify ids — e.g. "do I have any new DMs?", "summarise my recent DM activity", "list everyone who messaged me today".
+When NOT to use: to read the full chat history with one specific person (use twitter_list_dms with their participant_id — that returns more context per recipient). To send a DM (use twitter_send_dm).
+Returns: { messages, result_count, next_pagination_token? }. messages is a list of DmEventEnriched ordered newest-first per X. Each event has { dm_event_id, dm_conversation_id, event_type, text?, sender_id?, sender_handle?, sender_name?, created_at? }. The connected user's own outgoing messages also appear here (compare sender_handle to the connected account to tell incoming from outgoing). event_type is usually 'MessageCreate'; pass event_types: ['MessageCreate'] to filter out join/leave noise.
+Prerequisites: a connected X account with DM scope (dm.read).
+Errors: { code: 'not_connected' } when the X token is missing dm.read or is expired. { code: 'rate_limited' } with retry_after when X surfaces 429. { code: 'upstream_error' } for 5xx.`,
+      inputSchema: {
+        max_results: z
+          .number()
+          .int()
+          .positive()
+          .max(100)
+          .optional()
+          .describe("Page size. Default 50, max 100 (X cap)."),
+        event_types: z
+          .array(z.enum(["MessageCreate", "ParticipantsJoin", "ParticipantsLeave"]))
+          .optional()
+          .describe("Filter to specific event types. Pass ['MessageCreate'] to skip group join/leave noise. Omit to get everything."),
+        pagination_token: z
+          .string()
+          .optional()
+          .describe("Opaque token from the previous call's `next_pagination_token`."),
+      },
+      outputSchema: ListRecentDmEventsResultShape,
+      annotations: {
+        title: "List recent DM events across all conversations",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ max_results, event_types, pagination_token }) => {
+      const result = await listRecentDmEvents({ max_results, event_types, pagination_token })
       if (!result.ok) {
         const extra: Record<string, unknown> = {}
         if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after

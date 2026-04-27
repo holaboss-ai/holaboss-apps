@@ -29,6 +29,7 @@ mcp:
     - twitter_get_queue_stats
     - twitter_send_dm
     - twitter_list_dms
+    - twitter_list_recent_dm_events
 
 integration:
   destination: "twitter"

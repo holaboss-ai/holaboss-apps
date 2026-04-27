@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import {
   listDirectMessages,
+  listRecentDmEvents,
   resetBridgeClient,
   sendDirectMessage,
   setBridgeClient,
@@ -277,5 +278,151 @@ describe("twitter dm — listDirectMessages", () => {
     const r = await listDirectMessages({ participant_id: "12345" })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe("not_connected")
+  })
+})
+
+describe("twitter dm — listRecentDmEvents (inbox-wide)", () => {
+  let bridge: MockBridge
+
+  beforeEach(() => {
+    bridge = new MockBridge()
+    setBridgeClient(bridge.asClient())
+  })
+
+  afterEach(() => {
+    resetBridgeClient()
+  })
+
+  it("requests dm_event.fields + expansions=sender_id + user.fields so X returns sender profile inline", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({})
+    const url = bridge.calls[0].endpoint
+    expect(url).toContain("/dm_events?")
+    expect(url).toContain("dm_event.fields=")
+    expect(url).toContain("expansions=sender_id")
+    expect(url).toContain("user.fields=")
+    expect(url).toContain("username")
+    expect(url).toContain("name")
+  })
+
+  it("does NOT include a participant_id segment in the URL (this is the inbox-wide endpoint)", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({})
+    expect(bridge.calls[0].endpoint).not.toContain("/dm_conversations/with/")
+  })
+
+  it("clamps max_results to the X cap of 100", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({ max_results: 999 })
+    expect(bridge.calls[0].endpoint).toContain("max_results=100")
+  })
+
+  it("forwards event_types as a comma-separated query param", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({ event_types: ["MessageCreate", "ParticipantsLeave"] })
+    expect(bridge.calls[0].endpoint).toContain("event_types=MessageCreate%2CParticipantsLeave")
+  })
+
+  it("omits event_types from the URL when not supplied (X default = everything)", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({})
+    expect(bridge.calls[0].endpoint).not.toContain("event_types=")
+  })
+
+  it("inlines sender_handle + sender_name from the X users include", async () => {
+    bridge.whenAny().respond(200, {
+      data: [
+        {
+          id: "ev_1",
+          event_type: "MessageCreate",
+          text: "hello",
+          sender_id: "u_42",
+          created_at: "2026-04-27T10:00:00Z",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      includes: {
+        users: [{ id: "u_42", username: "joshua", name: "Joshua A" }],
+      },
+      meta: { result_count: 1 },
+    })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data.messages).toHaveLength(1)
+      expect(r.data.messages[0]).toMatchObject({
+        sender_id: "u_42",
+        sender_handle: "joshua",
+        sender_name: "Joshua A",
+      })
+    }
+  })
+
+  it("leaves sender_handle / sender_name undefined when X didn't include the user (rare but possible)", async () => {
+    bridge.whenAny().respond(200, {
+      data: [
+        {
+          id: "ev_1",
+          event_type: "MessageCreate",
+          sender_id: "u_99",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      meta: { result_count: 1 },
+      // no `includes`
+    })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data.messages[0].sender_id).toBe("u_99")
+      expect(r.data.messages[0].sender_handle).toBeUndefined()
+      expect(r.data.messages[0].sender_name).toBeUndefined()
+    }
+  })
+
+  it("forwards pagination_token", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    await listRecentDmEvents({ pagination_token: "page_2" })
+    expect(bridge.calls[0].endpoint).toContain("pagination_token=page_2")
+  })
+
+  it("surfaces meta.next_token as next_pagination_token", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: { result_count: 0, next_token: "next_page" } })
+    const r = await listRecentDmEvents({})
+    if (r.ok) expect(r.data.next_pagination_token).toBe("next_page")
+  })
+
+  it("handles an empty inbox cleanly", async () => {
+    bridge.whenAny().respond(200, {})
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data.messages).toEqual([])
+      expect(r.data.result_count).toBe(0)
+    }
+  })
+
+  it("maps 401 to not_connected", async () => {
+    bridge.whenAny().respond(401, { detail: "expired" })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("not_connected")
+  })
+
+  it("maps 429 to rate_limited with retry_after", async () => {
+    bridge.whenAny().respond(429, { detail: "slow" }, { "retry-after": "60" })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.code).toBe("rate_limited")
+      expect(r.error.retry_after).toBe(60)
+    }
+  })
+
+  it("maps 5xx to upstream_error", async () => {
+    bridge.whenAny().respond(502, { detail: "boom" })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("upstream_error")
   })
 })

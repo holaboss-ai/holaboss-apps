@@ -334,3 +334,97 @@ export async function listDirectMessages(
     },
   }
 }
+
+// ---------------------------------------------------------------------------
+// list inbox-wide (across all conversations)
+// ---------------------------------------------------------------------------
+
+export type DmEventTypeFilter = "MessageCreate" | "ParticipantsJoin" | "ParticipantsLeave"
+
+export interface ListRecentDmEventsInput {
+  max_results?: number
+  /** Filter to specific event types. Omit to get everything (X default). */
+  event_types?: DmEventTypeFilter[]
+  pagination_token?: string
+}
+
+/**
+ * Inbox-wide DM event with sender profile inlined. The per-participant
+ * variant (`DmEvent`) intentionally omits sender_handle/name because the
+ * caller already knows who the other party is. For inbox-wide reads we
+ * expand `sender_id` via X's `users` include and denormalise the result
+ * so the agent doesn't need a follow-up user lookup.
+ */
+export interface DmEventEnriched extends DmEvent {
+  /** Provider handle without the `@`, e.g. "joshua". Absent if X didn't include the user (rare). */
+  sender_handle?: string
+  /** Display name, e.g. "Joshua A". */
+  sender_name?: string
+}
+
+export interface ListRecentDmEventsOutput {
+  messages: DmEventEnriched[]
+  result_count: number
+  next_pagination_token?: string
+}
+
+interface RawIncludedUser {
+  id: string
+  username?: string
+  name?: string
+}
+
+export async function listRecentDmEvents(
+  input: ListRecentDmEventsInput = {},
+): Promise<Result<ListRecentDmEventsOutput>> {
+  const max = Math.min(Math.max(input.max_results ?? DM_LIST_DEFAULT, 1), DM_LIST_MAX)
+  const params = new URLSearchParams({
+    max_results: String(max),
+    "dm_event.fields": DM_EVENT_FIELDS,
+    expansions: "sender_id",
+    "user.fields": "username,name",
+  })
+  if (input.event_types && input.event_types.length > 0) {
+    // X API expects a comma-separated list, not repeated query params.
+    // Verified against the v2 docs (2026-04 snapshot): event_types=A,B,C.
+    params.set("event_types", input.event_types.join(","))
+  }
+  if (input.pagination_token?.trim()) {
+    params.set("pagination_token", input.pagination_token.trim())
+  }
+
+  const result = await call<{
+    data?: RawDmEvent[]
+    includes?: { users?: RawIncludedUser[] }
+    meta?: { result_count?: number; next_token?: string }
+  }>("GET", `${X_API_BASE}/dm_events?${params.toString()}`)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  // Build a one-shot lookup so we don't do N×M scans on large pages.
+  const usersById = new Map<string, RawIncludedUser>()
+  for (const u of result.data?.includes?.users ?? []) {
+    if (u?.id) usersById.set(u.id, u)
+  }
+
+  const events = (result.data?.data ?? []).map((e): DmEventEnriched => {
+    const sender = e.sender_id ? usersById.get(e.sender_id) : undefined
+    return {
+      dm_event_id: e.id,
+      dm_conversation_id: e.dm_conversation_id ?? "",
+      event_type: e.event_type,
+      text: e.text,
+      sender_id: e.sender_id,
+      created_at: e.created_at,
+      sender_handle: sender?.username,
+      sender_name: sender?.name,
+    }
+  })
+  return {
+    ok: true,
+    data: {
+      messages: events,
+      result_count: result.data?.meta?.result_count ?? events.length,
+      next_pagination_token: result.data?.meta?.next_token,
+    },
+  }
+}
