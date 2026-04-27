@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "composio:broker": "tsx scripts/composio-dev-broker.ts",
-    "composio:connect": "tsx scripts/composio-connect.ts"
+    "composio:connect": "tsx scripts/composio-connect.ts",
+    "composio:spike-byo-creds": "tsx scripts/composio-spike-byo-creds.ts"
   },
   "devDependencies": {
     "tsx": "^4.21.0",
