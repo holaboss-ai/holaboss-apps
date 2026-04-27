@@ -187,9 +187,89 @@ interface SpikeReport {
     ok?: boolean
     sampleBody?: string
   }
+  diagnostics?: ComposioDiagnostics
   timings: StepTiming[]
   conclusion: "PASS" | "FAIL"
   failureNote?: string
+}
+
+interface ComposioDiagnostics {
+  authConfig?: Record<string, unknown>
+  connectedAccount?: Record<string, unknown>
+  toolkit?: Record<string, unknown>
+}
+
+async function dumpDiagnostics(
+  apiKey: string,
+  baseUrl: string | undefined,
+  ids: { authConfigId: string; connectedAccountId: string },
+): Promise<ComposioDiagnostics> {
+  const base = (baseUrl ?? "https://backend.composio.dev").replace(/\/+$/, "")
+  const fetchJson = async (path: string): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const r = await fetch(`${base}${path}`, {
+        headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+      })
+      const text = await r.text()
+      return JSON.parse(text) as Record<string, unknown>
+    } catch {
+      return undefined
+    }
+  }
+  const [authConfig, connectedAccount, toolkit] = await Promise.all([
+    fetchJson(`/api/v3/auth_configs/${ids.authConfigId}`),
+    fetchJson(`/api/v3/connected_accounts/${ids.connectedAccountId}`),
+    fetchJson(`/api/v3/toolkits/${ids.authConfigId.replace(/^ac_/, "")}`).then(() => undefined),
+  ])
+  return { authConfig, connectedAccount, toolkit }
+}
+
+/** Translate Composio's diagnostic payload into a one-line actionable hint. */
+function hintFromDiagnostics(
+  toolkitSlug: string,
+  status: string,
+  diag: ComposioDiagnostics,
+  passedScheme: ComposioAuthScheme | undefined,
+  passedFields: string[],
+): string | undefined {
+  // Read the auth_config's expected fields. Composio surfaces this as
+  // `expected_input_fields` or `auth_config.fields` depending on api version.
+  const ac = diag.authConfig ?? {}
+  const expectedFields =
+    (ac["expected_input_fields"] as Array<{ name?: string }> | undefined) ??
+    (ac["fields"] as Array<{ name?: string }> | undefined) ??
+    ((ac["auth_config"] as Record<string, unknown> | undefined)?.["expected_input_fields"] as
+      | Array<{ name?: string }>
+      | undefined)
+  const expectedNames = (expectedFields ?? [])
+    .map((f) => f?.name)
+    .filter((n): n is string => typeof n === "string")
+  const expectedScheme =
+    (ac["auth_scheme"] as string | undefined) ??
+    ((ac["auth_config"] as Record<string, unknown> | undefined)?.["auth_scheme"] as string | undefined)
+
+  const missing = expectedNames.filter((n) => !passedFields.includes(n))
+  const extra = passedFields.filter((n) => expectedNames.length > 0 && !expectedNames.includes(n))
+
+  const parts: string[] = []
+  parts.push(`Status stuck at ${status}.`)
+  if (expectedScheme && passedScheme && expectedScheme !== passedScheme) {
+    parts.push(`Composio expected auth_scheme="${expectedScheme}" but we sent "${passedScheme}". Re-run with --auth-scheme ${expectedScheme}.`)
+  }
+  if (missing.length || extra.length) {
+    parts.push(
+      `Field-name mismatch — Composio expected [${expectedNames.join(", ") || "(none reported)"}], we sent [${passedFields.join(", ")}].`,
+    )
+    if (missing.length) {
+      parts.push(`Try: --credentials-json '${JSON.stringify(Object.fromEntries(missing.map((n) => [n, "<value>"])))}'`)
+    }
+  }
+  if (toolkitSlug === "hubspot" && passedScheme === "API_KEY") {
+    parts.push(
+      `HubSpot Private App tokens are bearer-style. Try: --credentials-json '{"token":"hubspot_xxx"}' --auth-scheme BEARER_TOKEN`,
+    )
+  }
+  return parts.length > 1 ? parts.join(" ") : undefined
 }
 
 async function runSpike(args: Args, apiKey: string): Promise<SpikeReport> {
@@ -229,6 +309,10 @@ async function runSpike(args: Args, apiKey: string): Promise<SpikeReport> {
       connectedAccountId: connect.connectedAccountId,
       baseUrl: args.baseUrl,
     })
+    const diag = await dumpDiagnostics(apiKey, args.baseUrl, {
+      authConfigId: connect.authConfigId,
+      connectedAccountId: connect.connectedAccountId,
+    })
     timings.push({
       step: "wait for ACTIVE",
       ms: Date.now() - t1,
@@ -239,13 +323,15 @@ async function runSpike(args: Args, apiKey: string): Promise<SpikeReport> {
       toolkitSlug: args.toolkitSlug,
       authScheme: authScheme ?? "(inferred)",
       credentialFields,
-      authConfigId: fallback.authConfigId ?? "(unknown)",
+      authConfigId: fallback.authConfigId ?? connect.authConfigId,
       connectedAccountId: connect.connectedAccountId,
       connectedAccountStatus: fallback.status,
       verify: { skipped: true },
+      diagnostics: diag,
       timings,
       conclusion: "FAIL",
-      failureNote: `Connected account never became ACTIVE: ${(err as Error).message}`,
+      failureNote: hintFromDiagnostics(args.toolkitSlug, fallback.status, diag, args.authScheme, credentialFields)
+        ?? `Connected account never became ACTIVE: ${(err as Error).message}`,
     }
   }
   timings.push({
@@ -339,6 +425,14 @@ function previewBody(data: unknown): string {
   return str.length > 200 ? `${str.slice(0, 197)}…` : str
 }
 
+function indent(text: string, spaces: number): string {
+  const pad = " ".repeat(spaces)
+  return text
+    .split("\n")
+    .map((line) => `${pad}${line}`)
+    .join("\n")
+}
+
 function printReport(report: SpikeReport) {
   const status = report.conclusion === "PASS" ? "✅ PASS" : "❌ FAIL"
   console.log("")
@@ -376,6 +470,18 @@ function printReport(report: SpikeReport) {
   if (report.failureNote && report.conclusion === "FAIL") {
     console.log("")
     console.log(`  Failure note: ${report.failureNote}`)
+  }
+  if (report.diagnostics?.authConfig || report.diagnostics?.connectedAccount) {
+    console.log("")
+    console.log("  Composio diagnostics (post-failure dump):")
+    if (report.diagnostics.authConfig) {
+      console.log("    auth_config:")
+      console.log(indent(JSON.stringify(report.diagnostics.authConfig, null, 2), 6))
+    }
+    if (report.diagnostics.connectedAccount) {
+      console.log("    connected_account:")
+      console.log(indent(JSON.stringify(report.diagnostics.connectedAccount, null, 2), 6))
+    }
   }
   console.log("─".repeat(72))
   console.log("")
