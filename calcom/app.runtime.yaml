@@ -16,7 +16,7 @@ mcp:
   enabled: true
   transport: http-sse
   port: 3099
-  path: /mcp
+  path: /mcp/sse
   tools:
     - calcom_get_connection_status
     - calcom_list_event_types

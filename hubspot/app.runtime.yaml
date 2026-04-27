@@ -16,7 +16,7 @@ mcp:
   enabled: true
   transport: http-sse
   port: 3099
-  path: /mcp
+  path: /mcp/sse
   tools:
     - "hubspot_get_connection_status"
     - "hubspot_describe_schema"
