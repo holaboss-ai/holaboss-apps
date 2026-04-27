@@ -48,19 +48,27 @@ jobs:
           MODULES="${{ inputs.modules || '' }}"
           TARGETS="${{ inputs.targets || 'linux-x64,darwin-arm64,win32-x64' }}"
 
+          # Always derive release_tag / release_app from the ref when it
+          # looks like a per-app tag, even if `inputs.modules` was passed
+          # explicitly — `release-changesets.yml` dispatches us with
+          # `--ref <tag> -f modules=<name>`, and the per-app release step
+          # depends on these outputs to name the GitHub Release correctly.
+          if [[ "$REF" == *@[0-9]* ]]; then
+            echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
+            echo "release_app=${REF%@*}" >> "$GITHUB_OUTPUT"
+          elif [[ "$REF" =~ ^v[0-9] ]]; then
+            echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
+          fi
+
           if [[ -z "$MODULES" || "$MODULES" == "all" ]]; then
             if [[ "$REF" =~ ^v[0-9] ]]; then
               # Legacy `v<digit>*` tag — build everything except apps that
               # have already migrated to changesets.
               MODULES="$LEGACY_MODULES"
-              echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
             elif [[ "$REF" == *@[0-9]* ]]; then
               # Changesets per-app tag — extract the module name from the
               # `<name>@<semver>` prefix. e.g. `twitter@0.3.0` → twitter.
-              MOD_NAME="${REF%@*}"
-              MODULES="$MOD_NAME"
-              echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
-              echo "release_app=$MOD_NAME" >> "$GITHUB_OUTPUT"
+              MODULES="${REF%@*}"
             else
               # workflow_dispatch with `all` — fall back to legacy list so we
               # don't accidentally rebuild migrated apps.
