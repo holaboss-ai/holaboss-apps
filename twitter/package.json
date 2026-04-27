@@ -1,5 +1,6 @@
 {
-  "name": "twitter-module",
+  "name": "twitter",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -62,6 +63,11 @@
   },
   "packageManager": "pnpm@10.12.1",
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3", "esbuild", "msw", "unrs-resolver"]
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "msw",
+      "unrs-resolver"
+    ]
   }
 }

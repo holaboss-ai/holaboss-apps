@@ -1,5 +1,5 @@
 {
-  "name": "attio-module",
+  "name": "attio",
   "private": true,
   "type": "module",
   "scripts": {

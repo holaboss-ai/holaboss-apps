@@ -2,7 +2,18 @@ name: Build & Release App Archives
 
 on:
   push:
-    tags: ["v*"]
+    # Two tag flows are supported in parallel during the changesets pilot:
+    #
+    #   - `v[0-9]*`         → legacy lockstep release: builds every module
+    #                         in `LEGACY_MODULES` (twitter is intentionally
+    #                         excluded — it ships independently now). The
+    #                         `[0-9]` suffix prevents future module names
+    #                         starting with `v` (`voltron`, etc.) from
+    #                         double-matching this pattern.
+    #   - `*@[0-9]*`        → per-app changesets release (e.g.
+    #                         `twitter@0.3.0`): builds only the named
+    #                         module across all targets.
+    tags: ["v[0-9]*", "*@[0-9]*"]
   workflow_dispatch:
     inputs:
       modules:
@@ -21,20 +32,45 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      release_app: ${{ steps.resolve.outputs.release_app }}
     steps:
       - name: Resolve build matrix
         id: resolve
         env:
-          ALL_MODULES: "twitter,linkedin,reddit,gmail,github,sheets,calcom,attio,apollo,zoominfo,instantly,hubspot"
+          # `LEGACY_MODULES` is what `v*` lockstep tags still build. Once a
+          # module migrates to changesets it MUST be removed from this list,
+          # otherwise a stray `v*` tag will double-build it.
+          LEGACY_MODULES: "linkedin,reddit,gmail,github,sheets,calcom,attio,apollo,zoominfo,instantly,hubspot"
           ALL_TARGETS: "linux-x64,darwin-arm64,win32-x64"
         run: |
-          MODULES="${{ inputs.modules || 'all' }}"
+          REF="${GITHUB_REF#refs/tags/}"
+          MODULES="${{ inputs.modules || '' }}"
           TARGETS="${{ inputs.targets || 'linux-x64,darwin-arm64,win32-x64' }}"
 
-          [[ "$MODULES" == "all" ]] && MODULES="$ALL_MODULES"
+          if [[ -z "$MODULES" || "$MODULES" == "all" ]]; then
+            if [[ "$REF" =~ ^v[0-9] ]]; then
+              # Legacy `v<digit>*` tag — build everything except apps that
+              # have already migrated to changesets.
+              MODULES="$LEGACY_MODULES"
+              echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
+            elif [[ "$REF" == *@[0-9]* ]]; then
+              # Changesets per-app tag — extract the module name from the
+              # `<name>@<semver>` prefix. e.g. `twitter@0.3.0` → twitter.
+              MOD_NAME="${REF%@*}"
+              MODULES="$MOD_NAME"
+              echo "release_tag=$REF" >> "$GITHUB_OUTPUT"
+              echo "release_app=$MOD_NAME" >> "$GITHUB_OUTPUT"
+            else
+              # workflow_dispatch with `all` — fall back to legacy list so we
+              # don't accidentally rebuild migrated apps.
+              MODULES="$LEGACY_MODULES"
+            fi
+          fi
 
           # Build matrix JSON: [{module: "twitter", target: "linux-x64"}, ...]
           MATRIX=$(echo "$MODULES" | tr ',' '\n' | while read -r mod; do
+            [[ -z "$mod" ]] && continue
             echo "$TARGETS" | tr ',' '\n' | while read -r tgt; do
               echo "{\"module\":\"$mod\",\"target\":\"$tgt\"}"
             done
@@ -70,8 +106,8 @@ jobs:
           retention-days: 7
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') && !cancelled()
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/') && !cancelled()
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -88,7 +124,8 @@ jobs:
           echo "=== Archives ==="
           ls -lh release/
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (legacy lockstep)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '@') }}
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.tar.gz
@@ -110,3 +147,24 @@ jobs:
             | `linux-x64` | Linux sandbox (Docker/Fly) |
             | `darwin-arm64` | macOS Apple Silicon |
             | `win32-x64` | Windows |
+
+      - name: Create GitHub Release (per-app changesets)
+        if: contains(github.ref, '@')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          generate_release_notes: true
+          name: ${{ needs.prepare.outputs.release_tag }}
+          body: |
+            ## ${{ needs.prepare.outputs.release_app }} module
+
+            Pre-built archives for `${{ needs.prepare.outputs.release_app }}` only — extract and run, no install needed.
+
+            **Usage:**
+            ```bash
+            tar xzf ${{ needs.prepare.outputs.release_app }}-module-linux-x64.tar.gz
+            node .output/server/index.mjs &        # Web server
+            node .output/start-services.cjs &      # MCP + worker
+            ```
+
+            See per-app `CHANGELOG.md` for what changed in this release.
