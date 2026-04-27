@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "module-template",
+    "apollo",
+    "attio",
+    "calcom",
+    "create-hola-app",
+    "github",
+    "gmail",
+    "hubspot",
+    "instantly",
+    "linkedin",
+    "reddit",
+    "sheets",
+    "zoominfo"
+  ],
+  "privatePackages": {
+    "version": true,
+    "tag": true
+  }
+}

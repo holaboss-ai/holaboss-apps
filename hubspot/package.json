@@ -1,5 +1,5 @@
 {
-  "name": "hubspot-module",
+  "name": "hubspot",
   "private": true,
   "type": "module",
   "scripts": {

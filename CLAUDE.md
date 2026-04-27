@@ -174,8 +174,8 @@ When a third-party plan-tier rejects a call (e.g. Apollo free plan blocks `/mixe
 
 `pnpm-workspace.yaml` declares all 14 modules. From the repo root:
 
-- **Path filter (recommended):** `pnpm --filter ./<dir> run <script>` (e.g. `pnpm --filter ./hubspot run test:live`).
-- Filter by package name does NOT work with the bare directory name — every package's `name` field is `<dir>-module` (e.g. `hubspot-module`), so `pnpm --filter hubspot ...` returns "no projects matched". Use `./<dir>` (path) or `<dir>-module` (full name).
+- **Name filter:** `pnpm --filter <name> run <script>` (e.g. `pnpm --filter hubspot run test:live`). Each shippable module's package `name` is just its directory name (`twitter`, `linkedin`, …, `hubspot`). The two non-shippable workspaces are exceptions: `_template/` is named `module-template`, and `create-hola-app/` keeps its own CLI name.
+- **Path filter** (equivalent): `pnpm --filter ./<dir> run <script>`.
 - `cd <dir> && pnpm <script>` always works regardless of filter syntax.
 
 ## Creating a New Module
@@ -231,6 +231,15 @@ Modules are deployed into Holaboss sandbox containers via `app.runtime.yaml`. Th
 **Adding a new module** = add a directory + add an entry to `marketplace.json` (one PR, one diff). The manifest's `default_ref` gets bumped to the latest release tag on each push of `v*`.
 
 **Manual `/admin/apps` CRUD still works** for one-offs (coming-soon placeholders, env-specific hiding, allowed_user_ids overrides). The sync endpoint preserves these by default — see [`docs/MARKETPLACE_SYNC_DESIGN.md`](docs/MARKETPLACE_SYNC_DESIGN.md) for the diff strategy.
+
+## Release flows — legacy `v*` and changesets per-app
+
+Two release flows run in parallel:
+
+- **Legacy lockstep `v*`** — pushing a tag like `v0.2.9` triggers `build-apps.yml` to build every module in `LEGACY_MODULES` and create a single GitHub Release with all archives. This still drives every module that hasn't migrated to changesets.
+- **Per-app changesets** — `twitter` is the pilot. `pnpm changeset` records intent in `.changeset/*.md`, the `release-changesets` workflow opens a "Version Packages" PR, and merging that PR pushes a tag like `twitter@0.3.0` which builds and releases only twitter. The same flow rewrites `marketplace.json`'s per-app `default_ref` via `scripts/sync-marketplace-refs.mjs`. See [`.changeset/README.md`](.changeset/README.md) for migration steps.
+
+Modules opted out of changesets are listed in `.changeset/config.json`'s `ignore` array — they ship via the legacy `v*` flow until explicitly migrated.
 
 ## Cross-module docs index
 

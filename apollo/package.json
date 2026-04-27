@@ -1,5 +1,5 @@
 {
-  "name": "apollo-module",
+  "name": "apollo",
   "private": true,
   "type": "module",
   "scripts": {

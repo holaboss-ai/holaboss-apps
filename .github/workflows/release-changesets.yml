@@ -1,0 +1,57 @@
+name: Release (changesets)
+
+# Drives the per-app release flow:
+#   1. On every push to `main`, if there are pending `.changeset/*.md` files,
+#      open or update a "Version Packages" PR. Merging that PR runs
+#      `changeset tag`, which creates per-app tags like `twitter-module@0.3.0`.
+#   2. Those tags trigger `build-apps.yml` (separate workflow) which builds
+#      only the named module.
+#
+# The legacy `v*` lockstep flow stays intact for modules that haven't migrated
+# off the `ignore` list in `.changeset/config.json` yet.
+
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: release-changesets
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # commit version bumps + push tags
+      pull-requests: write  # open / update the "Version Packages" PR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install (root only)
+        # `--ignore-workspace` keeps pnpm from descending into per-module
+        # packages — changesets reads workspace package.json files directly,
+        # it doesn't need their deps installed. `--ignore-scripts` skips any
+        # postinstalls (esbuild, better-sqlite3 native rebuild). Per-module
+        # deps are exercised by `build-apps.yml`.
+        run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+
+      - uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          # `release` runs `changeset tag` (no npm publish — every package is
+          # `private: true`). The tags it pushes match the `*-module@*`
+          # pattern that `build-apps.yml` listens on.
+          publish: pnpm release
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
