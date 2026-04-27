@@ -1,11 +1,18 @@
 name: Release (changesets)
 
 # Drives the per-app release flow:
-#   1. On every push to `main`, if there are pending `.changeset/*.md` files,
-#      open or update a "Version Packages" PR. Merging that PR runs
-#      `changeset tag`, which creates per-app tags like `twitter-module@0.3.0`.
-#   2. Those tags trigger `build-apps.yml` (separate workflow) which builds
-#      only the named module.
+#
+#   1. On every push to `main`, `changesets/action` either:
+#      a. opens / updates the long-lived "Version Packages" PR if there are
+#         pending `.changeset/*.md` files; OR
+#      b. runs `pnpm release` (= `changeset tag`) which pushes per-app tags
+#         like `twitter@0.3.0` for every package whose `version` doesn't
+#         already have a matching tag — this fires when the Version Packages
+#         PR is merged.
+#   2. After tags are pushed, the `dispatch-build` step explicitly invokes
+#      `build-apps.yml` for each newly published package. This is necessary
+#      because tags pushed by GITHUB_TOKEN don't trigger downstream workflows
+#      (GitHub safeguard against recursive workflow loops).
 #
 # The legacy `v*` lockstep flow stays intact for modules that haven't migrated
 # off the `ignore` list in `.changeset/config.json` yet.
@@ -24,6 +31,7 @@ jobs:
     permissions:
       contents: write       # commit version bumps + push tags
       pull-requests: write  # open / update the "Version Packages" PR
+      actions: write        # dispatch build-apps.yml after a release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,14 +52,37 @@ jobs:
         # deps are exercised by `build-apps.yml`.
         run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
 
-      - uses: changesets/action@v1
+      - id: changesets
+        uses: changesets/action@v1
         with:
           version: pnpm version-packages
           # `release` runs `changeset tag` (no npm publish — every package is
-          # `private: true`). The tags it pushes match the `*-module@*`
-          # pattern that `build-apps.yml` listens on.
+          # `private: true`). The tags it pushes match the `*@[0-9]*` pattern
+          # build-apps.yml listens on.
           publish: pnpm release
           commit: "chore(release): version packages"
           title: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dispatch build for each newly published package
+        # `changesets/action` exposes `published` (bool) and `publishedPackages`
+        # (JSON array of `{name, version}`). When non-empty, kick off
+        # `build-apps.yml` per package with `--ref <tag>` so github.ref inside
+        # the build run is the tag itself — that way the matrix builds the
+        # right module and the per-app GitHub Release step can attach archives
+        # to the release that `changesets/action` already created.
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          echo "$PUBLISHED" | jq -c '.[]' | while read -r entry; do
+            NAME=$(echo "$entry" | jq -r '.name')
+            VERSION=$(echo "$entry" | jq -r '.version')
+            TAG="${NAME}@${VERSION}"
+            echo "→ dispatching build-apps for $TAG"
+            gh workflow run build-apps.yml \
+              --ref "$TAG" \
+              -f modules="$NAME"
+          done

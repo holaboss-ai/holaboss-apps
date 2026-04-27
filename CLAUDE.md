@@ -236,10 +236,86 @@ Modules are deployed into Holaboss sandbox containers via `app.runtime.yaml`. Th
 
 Two release flows run in parallel:
 
-- **Legacy lockstep `v*`** — pushing a tag like `v0.2.9` triggers `build-apps.yml` to build every module in `LEGACY_MODULES` and create a single GitHub Release with all archives. This still drives every module that hasn't migrated to changesets.
-- **Per-app changesets** — `twitter` is the pilot. `pnpm changeset` records intent in `.changeset/*.md`, the `release-changesets` workflow opens a "Version Packages" PR, and merging that PR pushes a tag like `twitter@0.3.0` which builds and releases only twitter. The same flow rewrites `marketplace.json`'s per-app `default_ref` via `scripts/sync-marketplace-refs.mjs`. See [`.changeset/README.md`](.changeset/README.md) for migration steps.
+- **Legacy lockstep `v[0-9]*`** — pushing a tag like `v0.2.9` triggers `build-apps.yml` to build every module in `LEGACY_MODULES` and create a single bundled GitHub Release. This still drives every module that hasn't migrated to changesets.
+- **Per-app changesets `<name>@<semver>`** — `twitter` is the pilot. Each module on this flow ships independently and gets its own GitHub Release.
 
 Modules opted out of changesets are listed in `.changeset/config.json`'s `ignore` array — they ship via the legacy `v*` flow until explicitly migrated.
+
+### Per-app changesets release — author playbook
+
+For a code change to a module on the changesets flow (currently only `twitter`):
+
+1. Make the code change on a feature branch.
+2. `pnpm changeset` from the repo root. Pick the module (e.g. `twitter`), choose `patch` / `minor` / `major`, write a one-line summary. The CLI drops a `.changeset/<random-name>.md` file. Commit it alongside the code change.
+3. Open the PR. Merge to `main` as usual.
+
+Then CI takes over (see next section).
+
+### Per-app changesets release — what CI does after merge
+
+```
+PR (code + .changeset/*.md) merged to main
+        │
+        ▼
+release-changesets workflow runs `pnpm version-packages`:
+  • bumps <name>/package.json version
+  • regenerates <name>/CHANGELOG.md
+  • rewrites marketplace.json's per-app default_ref
+        │
+        ▼
+Pushes branch `changeset-release/main`, opens
+"chore(release): version packages" PR (long-lived;
+auto-updated on every subsequent main push that adds
+more changesets).
+        │
+        │ merge the Version Packages PR
+        ▼
+release-changesets workflow runs again. `pnpm release`
+(= `changeset tag`) creates and pushes git tag(s) like
+`twitter@0.3.0` for each bumped package. changesets/action
+also creates an empty GitHub Release per tag.
+        │
+        ▼
+Final step in release-changesets dispatches build-apps.yml
+via `gh workflow run build-apps.yml --ref <tag> -f modules=<name>`
+for each newly published package. (See "known caveats" — the
+explicit dispatch is necessary because tags pushed by
+GITHUB_TOKEN don't trigger downstream workflows on their own.)
+        │
+        ▼
+build-apps.yml runs against the tag ref:
+  • builds <name> for linux-x64 / darwin-arm64 / win32-x64
+  • uploads archives to the existing GitHub Release for that tag
+```
+
+### Repo-level requirements
+
+Two repo settings must be on for the flow to run end-to-end. Both live under **Settings → Actions → General**:
+
+- **Workflow permissions → Allow GitHub Actions to create and approve pull requests** — without this, `release-changesets` can push the `changeset-release/main` branch but the PR-create step 403s. The branch is still pushed; the playbook fallback is to open the PR manually:
+  ```
+  gh pr create --base main --head changeset-release/main \
+      --title "chore(release): version packages" \
+      --body "<paste the changeset summary>"
+  ```
+- **Allow GitHub Actions to create and approve pull requests** is also required for the Version Packages PR to be auto-opened on subsequent runs. Without it, every Version Packages PR has to be filed by hand.
+
+### Known caveats
+
+1. **`GITHUB_TOKEN`-pushed tags don't trigger downstream workflows.** GitHub's safeguard against recursive workflow loops. `release-changesets.yml` works around this with an explicit `gh workflow run build-apps.yml --ref <tag> -f modules=<name>` step that runs after `pnpm release` for each entry in `changesets/action`'s `publishedPackages` output. If that step ever breaks, archives won't end up on the GitHub Release; backfill manually:
+   ```
+   gh workflow run build-apps.yml --ref <tag> -f modules=<name>
+   ```
+2. **`changeset tag` will create tags for any package whose current `version` doesn't already have a matching git tag** — even when there's no pending `.changeset/*.md`. After landing the pilot, this auto-tagged `twitter@0.2.8` (the seed version) on a no-op release run. Harmless (the tag matches main HEAD; build-apps wasn't triggered for the same reason as caveat 1) but worth knowing.
+3. **The CHANGELOG formatter pulls in `prettier-plugin-tailwindcss`** from `<module>/.prettierrc`. ESM resolution from inside changesets fails on it (`ERR_MODULE_NOT_FOUND`). Each module on changesets needs an `overrides` block in its `.prettierrc` that drops plugins for `CHANGELOG.md` — `twitter/.prettierrc` is the reference.
+
+### Migrating a new module onto the changesets flow
+
+1. Add `"version": "<current ref e.g. 0.2.8>"` to the module's `package.json`.
+2. Add a `CHANGELOG.md` override to the module's `.prettierrc` (copy from `twitter/.prettierrc`).
+3. Delete the module's name from the `ignore` array in `.changeset/config.json`.
+4. Add a per-app `default_ref` override on its entry in `marketplace.json` pointing at the last legacy `v*` tag (e.g. `"default_ref": "v0.2.8"`); subsequent changesets releases rewrite it via `scripts/sync-marketplace-refs.mjs`.
+5. Remove the module from `.github/workflows/build-apps.yml`'s `LEGACY_MODULES` env so a stray `v*` tag doesn't double-build it.
 
 ## Cross-module docs index
 
