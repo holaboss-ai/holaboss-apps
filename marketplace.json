@@ -2,7 +2,7 @@
   "$schema": "./marketplace.schema.json",
   "version": 1,
   "repo": "holaboss-ai/holaboss-apps",
-  "default_ref": "v0.2.7",
+  "default_ref": "v0.2.8",
   "archive_url_template": "https://github.com/holaboss-ai/holaboss-apps/releases/download/{ref}/{name}-module-{target}.tar.gz",
   "apps": [
     {
