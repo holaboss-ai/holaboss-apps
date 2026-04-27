@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   listDirectMessages,
   listRecentDmEvents,
+  lookupUserByHandle,
   resetBridgeClient,
   sendDirectMessage,
   setBridgeClient,
@@ -424,5 +425,109 @@ describe("twitter dm — listRecentDmEvents (inbox-wide)", () => {
     const r = await listRecentDmEvents({})
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe("upstream_error")
+  })
+})
+
+describe("twitter dm — lookupUserByHandle", () => {
+  let bridge: MockBridge
+
+  beforeEach(() => {
+    bridge = new MockBridge()
+    setBridgeClient(bridge.asClient())
+  })
+
+  afterEach(() => {
+    resetBridgeClient()
+  })
+
+  it("validates empty handle up-front", async () => {
+    const r = await lookupUserByHandle({ handle: "" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("validation_failed")
+    expect(bridge.calls).toHaveLength(0)
+  })
+
+  it("validates a handle that's only an '@' as empty after strip", async () => {
+    const r = await lookupUserByHandle({ handle: "@" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("validation_failed")
+    expect(bridge.calls).toHaveLength(0)
+  })
+
+  it("rejects handles with illegal characters before hitting X", async () => {
+    const r = await lookupUserByHandle({ handle: "josh-ua" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("validation_failed")
+    expect(bridge.calls).toHaveLength(0)
+  })
+
+  it("rejects handles longer than 15 chars before hitting X", async () => {
+    const r = await lookupUserByHandle({ handle: "a".repeat(16) })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("validation_failed")
+    expect(bridge.calls).toHaveLength(0)
+  })
+
+  it("strips a leading '@' before sending the request", async () => {
+    bridge
+      .whenGet("/users/by/username/joshua?user.fields=username%2Cname")
+      .respond(200, { data: { id: "12345", username: "joshua", name: "Joshua A" } })
+    const r = await lookupUserByHandle({ handle: "@joshua" })
+    expect(r.ok).toBe(true)
+    expect(bridge.calls[0].endpoint).toContain("/users/by/username/joshua")
+    expect(bridge.calls[0].endpoint).not.toContain("@")
+  })
+
+  it("returns user_id + canonical username + name on 200", async () => {
+    bridge
+      .whenAny()
+      .respond(200, { data: { id: "12345", username: "joshua", name: "Joshua A" } })
+    const r = await lookupUserByHandle({ handle: "joshua" })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data).toEqual({ user_id: "12345", username: "joshua", name: "Joshua A" })
+    }
+  })
+
+  it("falls back to caller-supplied handle when X omits username from response", async () => {
+    bridge.whenAny().respond(200, { data: { id: "12345" } })
+    const r = await lookupUserByHandle({ handle: "joshua" })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data.user_id).toBe("12345")
+      expect(r.data.username).toBe("joshua")
+      expect(r.data.name).toBeUndefined()
+    }
+  })
+
+  it("treats X's '200 with empty data' (handle doesn't exist) as not_found", async () => {
+    bridge.whenAny().respond(200, {})
+    const r = await lookupUserByHandle({ handle: "nosuchuser" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("not_found")
+  })
+
+  it("maps 404 to not_found", async () => {
+    bridge.whenAny().respond(404, { detail: "not found" })
+    const r = await lookupUserByHandle({ handle: "joshua" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("not_found")
+  })
+
+  it("maps 401 to not_connected", async () => {
+    bridge.whenAny().respond(401, { detail: "expired" })
+    const r = await lookupUserByHandle({ handle: "joshua" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe("not_connected")
+  })
+
+  it("maps 429 to rate_limited with retry_after", async () => {
+    bridge.whenAny().respond(429, { detail: "slow" }, { "retry-after": "15" })
+    const r = await lookupUserByHandle({ handle: "joshua" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.code).toBe("rate_limited")
+      expect(r.error.retry_after).toBe(15)
+    }
   })
 })

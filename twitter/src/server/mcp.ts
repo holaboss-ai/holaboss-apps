@@ -12,7 +12,12 @@ import {
   resolveHolabossTurnContext,
   updateAppOutput,
 } from "./holaboss-bridge"
-import { listDirectMessages, listRecentDmEvents, sendDirectMessage } from "./dm"
+import {
+  listDirectMessages,
+  listRecentDmEvents,
+  lookupUserByHandle,
+  sendDirectMessage,
+} from "./dm"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
@@ -102,6 +107,12 @@ const ListRecentDmEventsResultShape = {
   messages: z.array(DmEventEnrichedShape),
   result_count: z.number(),
   next_pagination_token: z.string().optional(),
+}
+
+const LookupUserResultShape = {
+  user_id: z.string().describe("Numeric X user id. Pass this as `participant_id` to twitter_send_dm / twitter_list_dms."),
+  username: z.string().describe("Canonical handle without '@'."),
+  name: z.string().optional().describe("Display name, e.g. 'Joshua A'. Absent on rare accounts."),
 }
 
 async function syncAndPersist(
@@ -579,6 +590,43 @@ Errors: { code: 'not_connected' } when the X token is missing dm.read or is expi
     },
     async ({ max_results, event_types, pagination_token }) => {
       const result = await listRecentDmEvents({ max_results, event_types, pagination_token })
+      if (!result.ok) {
+        const extra: Record<string, unknown> = {}
+        if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after
+        return errCode(result.error.code, result.error.message, extra)
+      }
+      return success(result.data as unknown as Record<string, unknown>)
+    },
+  )
+
+  server.registerTool(
+    "twitter_lookup_user_by_handle",
+    {
+      title: "Resolve @handle to X user id",
+      description: `Look up an X user by their @handle and return the numeric user_id needed by every other DM tool.
+
+When to use: the user supplies a handle like '@joshua' (or 'joshua') and you need a numeric id to call twitter_send_dm / twitter_list_dms. Cheap read-only call; safe to use whenever you have only the handle.
+When NOT to use: you already have the numeric id (skip this hop). To search for users by name (this is exact-handle only). To list someone's tweets (out of scope).
+Returns: { user_id, username, name? }. user_id is the value to pass downstream as participant_id. username is the canonical (X may correct casing).
+Prerequisites: a connected X account; this endpoint is on the standard read scope, no DM scope required.
+Errors: { code: 'validation_failed' } when handle is empty or malformed (handles are alphanumeric + underscore, max 15 chars). { code: 'not_found' } when X has no user with that handle. { code: 'not_connected' } on 401/403. { code: 'rate_limited' } with retry_after on 429. { code: 'upstream_error' } on 5xx.`,
+      inputSchema: {
+        handle: z
+          .string()
+          .min(1)
+          .describe("X handle. With or without leading '@'. Case-insensitive on X's side."),
+      },
+      outputSchema: LookupUserResultShape,
+      annotations: {
+        title: "Resolve @handle to X user id",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ handle }) => {
+      const result = await lookupUserByHandle({ handle })
       if (!result.ok) {
         const extra: Record<string, unknown> = {}
         if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after

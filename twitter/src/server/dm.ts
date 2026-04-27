@@ -339,6 +339,78 @@ export async function listDirectMessages(
 }
 
 // ---------------------------------------------------------------------------
+// lookup user by handle
+// ---------------------------------------------------------------------------
+
+export interface LookupUserByHandleInput {
+  /** X handle, with or without leading '@'. Case-insensitive on X's side. */
+  handle: string
+}
+
+export interface LookupUserByHandleOutput {
+  /** Numeric X user id. Pass this as `participant_id` to twitter_send_dm / twitter_list_dms. */
+  user_id: string
+  /** Handle without the leading '@', e.g. 'joshua'. */
+  username: string
+  /** Display name, e.g. 'Joshua A'. */
+  name?: string
+}
+
+/**
+ * Resolve `@handle → numeric user_id`. Wraps X's
+ *   GET /2/users/by/username/{username}
+ * which returns the user object for the supplied handle. Read-only,
+ * cheap, available on all X API tiers (no DM scope required).
+ */
+export async function lookupUserByHandle(
+  input: LookupUserByHandleInput,
+): Promise<Result<LookupUserByHandleOutput>> {
+  // X handles are alphanumeric + underscore, max 15 chars. Strip the
+  // optional '@' so callers can pass either form.
+  const handle = (input.handle ?? "").trim().replace(/^@+/, "")
+  if (!handle) {
+    return { ok: false, error: { code: "validation_failed", message: "handle is required." } }
+  }
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
+    return {
+      ok: false,
+      error: {
+        code: "validation_failed",
+        message: `'${handle}' is not a valid X handle (alphanumeric + underscore, max 15 chars).`,
+      },
+    }
+  }
+
+  const params = new URLSearchParams({ "user.fields": "username,name" })
+  const result = await call<{
+    data?: { id: string; username?: string; name?: string }
+  }>("GET", `${X_API_BASE}/users/by/username/${encodeURIComponent(handle)}?${params.toString()}`)
+  if (!result.ok) return { ok: false, error: result.error }
+
+  const user = result.data?.data
+  if (!user?.id) {
+    // X v2 returns 200 + { errors: [...] } when the handle doesn't exist
+    // (instead of 404). Treat the missing data as not_found so the agent
+    // can react with a clean error rather than a generic upstream_error.
+    return {
+      ok: false,
+      error: {
+        code: "not_found",
+        message: `No X user found for handle '${handle}'.`,
+      },
+    }
+  }
+  return {
+    ok: true,
+    data: {
+      user_id: user.id,
+      username: user.username ?? handle,
+      name: user.name,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // list inbox-wide (across all conversations)
 // ---------------------------------------------------------------------------
 
