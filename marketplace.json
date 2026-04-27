@@ -10,11 +10,17 @@
       "description": "Compose, schedule, and publish tweets. Manages drafts locally and queues sends through the platform.",
       "icon": "twitter",
       "category": "social",
-      "tags": ["social", "content", "publishing", "twitter", "x"],
+      "tags": [
+        "social",
+        "content",
+        "publishing",
+        "twitter",
+        "x"
+      ],
       "path": "twitter",
       "provider_id": "twitter",
       "credential_source": "platform",
-      "default_ref": "v0.2.8",
+      "default_ref": "twitter@0.2.9",
       "is_hidden": false,
       "is_coming_soon": false
     },
@@ -23,7 +29,13 @@
       "description": "Compose, schedule, and publish LinkedIn posts (up to 3,000 chars). Drafts → queue → publish lifecycle.",
       "icon": "linkedin",
       "category": "social",
-      "tags": ["social", "content", "publishing", "linkedin", "professional"],
+      "tags": [
+        "social",
+        "content",
+        "publishing",
+        "linkedin",
+        "professional"
+      ],
       "path": "linkedin",
       "provider_id": "linkedin",
       "credential_source": "platform",
@@ -35,7 +47,13 @@
       "description": "Compose and submit Reddit text posts to specific subreddits, with title + Markdown body and scheduled-publish support.",
       "icon": "reddit",
       "category": "social",
-      "tags": ["social", "content", "publishing", "reddit", "community"],
+      "tags": [
+        "social",
+        "content",
+        "publishing",
+        "reddit",
+        "community"
+      ],
       "path": "reddit",
       "provider_id": "reddit",
       "credential_source": "platform",
@@ -47,7 +65,13 @@
       "description": "Search Gmail threads, draft replies locally, and send via the Gmail API. Pin threads as workspace outputs for CRM follow-up.",
       "icon": "gmail",
       "category": "productivity",
-      "tags": ["email", "productivity", "google", "communication", "crm"],
+      "tags": [
+        "email",
+        "productivity",
+        "google",
+        "communication",
+        "crm"
+      ],
       "path": "gmail",
       "provider_id": "gmail",
       "credential_source": "platform",
@@ -59,7 +83,13 @@
       "description": "Read-only GitHub digests — recent commits, PRs, releases, and repo activity windows.",
       "icon": "github",
       "category": "productivity",
-      "tags": ["development", "git", "code", "productivity", "engineering"],
+      "tags": [
+        "development",
+        "git",
+        "code",
+        "productivity",
+        "engineering"
+      ],
       "path": "github",
       "provider_id": "github",
       "credential_source": "platform",
@@ -71,7 +101,13 @@
       "description": "Google Sheets CRUD — read rows by header, append, update by row, with auto-publish of contact-row outputs for CRM workflows.",
       "icon": "google-sheets",
       "category": "productivity",
-      "tags": ["spreadsheet", "data", "google", "productivity", "crm"],
+      "tags": [
+        "spreadsheet",
+        "data",
+        "google",
+        "productivity",
+        "crm"
+      ],
       "path": "sheets",
       "provider_id": "googlesheets",
       "credential_source": "platform",
@@ -83,7 +119,12 @@
       "description": "Cal.com event types, bookings, availability, reschedule, and cancel — surfaced through the agent's tool catalog.",
       "icon": "cal",
       "category": "productivity",
-      "tags": ["scheduling", "meetings", "productivity", "calendar"],
+      "tags": [
+        "scheduling",
+        "meetings",
+        "productivity",
+        "calendar"
+      ],
       "path": "calcom",
       "provider_id": "calcom",
       "credential_source": "platform",
@@ -95,7 +136,13 @@
       "description": "Attio CRM — find / create / update people and companies with dynamic schema discovery; add notes, tasks, and pipeline stages.",
       "icon": "attio",
       "category": "crm",
-      "tags": ["crm", "contacts", "sales", "pipeline", "b2b"],
+      "tags": [
+        "crm",
+        "contacts",
+        "sales",
+        "pipeline",
+        "b2b"
+      ],
       "path": "attio",
       "provider_id": "attio",
       "credential_source": "platform",
@@ -107,7 +154,13 @@
       "description": "Apollo.io prospecting — search people / organizations, enrich emails, and orchestrate outbound email sequences.",
       "icon": "apollo",
       "category": "crm",
-      "tags": ["sales", "prospecting", "outreach", "b2b", "email"],
+      "tags": [
+        "sales",
+        "prospecting",
+        "outreach",
+        "b2b",
+        "email"
+      ],
       "path": "apollo",
       "provider_id": "apollo",
       "credential_source": "platform",
@@ -119,7 +172,13 @@
       "description": "ZoomInfo B2B intelligence — search contacts and companies, fetch firmographics + intent signals, inspect org charts.",
       "icon": "zoominfo",
       "category": "crm",
-      "tags": ["sales", "data", "intelligence", "b2b", "prospecting"],
+      "tags": [
+        "sales",
+        "data",
+        "intelligence",
+        "b2b",
+        "prospecting"
+      ],
       "path": "zoominfo",
       "provider_id": "zoominfo",
       "credential_source": "platform",
@@ -131,7 +190,13 @@
       "description": "Instantly cold email — manage campaigns, leads, and stats; idempotent pause / resume for in-flight outbound.",
       "icon": "instantly",
       "category": "crm",
-      "tags": ["sales", "email", "outreach", "automation", "b2b"],
+      "tags": [
+        "sales",
+        "email",
+        "outreach",
+        "automation",
+        "b2b"
+      ],
       "path": "instantly",
       "provider_id": "instantly",
       "credential_source": "platform",
@@ -143,7 +208,14 @@
       "description": "HubSpot CRM — contacts, companies, deals with dynamic property discovery; pipelines + stages enforced; notes and tasks.",
       "icon": "hubspot",
       "category": "crm",
-      "tags": ["crm", "sales", "marketing", "contacts", "deals", "b2b"],
+      "tags": [
+        "crm",
+        "sales",
+        "marketing",
+        "contacts",
+        "deals",
+        "b2b"
+      ],
       "path": "hubspot",
       "provider_id": "hubspot",
       "credential_source": "platform",
