@@ -330,6 +330,152 @@ describe("twitter dm — listRecentDmEvents (inbox-wide)", () => {
     expect(bridge.calls[0].endpoint).not.toContain("event_types=")
   })
 
+  it("derives a deduped senders rollup with handle + name + event_count + last_message preview", async () => {
+    bridge.whenAny().respond(200, {
+      data: [
+        {
+          id: "ev_3",
+          event_type: "MessageCreate",
+          text: "newest from joshua",
+          sender_id: "u_42",
+          created_at: "2026-04-27T10:30:00Z",
+          dm_conversation_id: "conv_a",
+        },
+        {
+          id: "ev_2",
+          event_type: "MessageCreate",
+          text: "from alice",
+          sender_id: "u_99",
+          created_at: "2026-04-27T10:20:00Z",
+          dm_conversation_id: "conv_b",
+        },
+        {
+          id: "ev_1",
+          event_type: "MessageCreate",
+          text: "older from joshua",
+          sender_id: "u_42",
+          created_at: "2026-04-27T10:00:00Z",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      includes: {
+        users: [
+          { id: "u_42", username: "joshua", name: "Joshua A" },
+          { id: "u_99", username: "alice", name: "Alice B" },
+        ],
+      },
+      meta: { result_count: 3 },
+    })
+    const r = await listRecentDmEvents({})
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      // Senders are deduped — joshua appears twice in messages but once here.
+      expect(r.data.senders).toHaveLength(2)
+      // Order respects newest-first: joshua's most recent (10:30) > alice (10:20).
+      expect(r.data.senders[0].user_id).toBe("u_42")
+      expect(r.data.senders[0]).toMatchObject({
+        handle: "joshua",
+        name: "Joshua A",
+        event_count: 2,
+        last_event_at: "2026-04-27T10:30:00Z",
+        last_message_text: "newest from joshua",
+        last_dm_conversation_id: "conv_a",
+      })
+      expect(r.data.senders[1]).toMatchObject({
+        user_id: "u_99",
+        handle: "alice",
+        event_count: 1,
+        last_message_text: "from alice",
+      })
+    }
+  })
+
+  it("truncates a very long preview to 140 chars with an ellipsis", async () => {
+    const longText = "x".repeat(500)
+    bridge.whenAny().respond(200, {
+      data: [
+        {
+          id: "ev_1",
+          event_type: "MessageCreate",
+          text: longText,
+          sender_id: "u_1",
+          created_at: "2026-04-27T10:00:00Z",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      includes: { users: [{ id: "u_1", username: "verbose", name: "Verbose User" }] },
+      meta: { result_count: 1 },
+    })
+    const r = await listRecentDmEvents({})
+    if (r.ok) {
+      const preview = r.data.senders[0].last_message_text!
+      expect(preview.length).toBe(140)
+      expect(preview.endsWith("…")).toBe(true)
+    }
+  })
+
+  it("falls through to a later MessageCreate when the very newest event is a join/leave", async () => {
+    bridge.whenAny().respond(200, {
+      data: [
+        {
+          id: "ev_2",
+          event_type: "ParticipantsJoin",
+          sender_id: "u_42",
+          created_at: "2026-04-27T10:30:00Z",
+          dm_conversation_id: "conv_a",
+        },
+        {
+          id: "ev_1",
+          event_type: "MessageCreate",
+          text: "real message",
+          sender_id: "u_42",
+          created_at: "2026-04-27T10:00:00Z",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      includes: { users: [{ id: "u_42", username: "joshua", name: "Joshua A" }] },
+      meta: { result_count: 2 },
+    })
+    const r = await listRecentDmEvents({})
+    if (r.ok) {
+      expect(r.data.senders).toHaveLength(1)
+      // last_event_at is the literal newest event (the join).
+      expect(r.data.senders[0].last_event_at).toBe("2026-04-27T10:30:00Z")
+      // last_message_text is derived from the next available MessageCreate.
+      expect(r.data.senders[0].last_message_text).toBe("real message")
+    }
+  })
+
+  it("skips events with no sender_id when building senders", async () => {
+    bridge.whenAny().respond(200, {
+      data: [
+        { id: "ev_1", event_type: "MessageCreate", text: "anon", dm_conversation_id: "conv_a" },
+        {
+          id: "ev_2",
+          event_type: "MessageCreate",
+          text: "from joshua",
+          sender_id: "u_42",
+          dm_conversation_id: "conv_a",
+        },
+      ],
+      includes: { users: [{ id: "u_42", username: "joshua" }] },
+      meta: { result_count: 2 },
+    })
+    const r = await listRecentDmEvents({})
+    if (r.ok) {
+      expect(r.data.senders).toHaveLength(1)
+      expect(r.data.senders[0].user_id).toBe("u_42")
+    }
+  })
+
+  it("returns an empty senders array when there are no events", async () => {
+    bridge.whenAny().respond(200, { data: [], meta: {} })
+    const r = await listRecentDmEvents({})
+    if (r.ok) {
+      expect(r.data.senders).toEqual([])
+    }
+  })
+
   it("inlines sender_handle + sender_name from the X users include", async () => {
     bridge.whenAny().respond(200, {
       data: [

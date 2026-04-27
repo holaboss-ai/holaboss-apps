@@ -437,11 +437,40 @@ export interface DmEventEnriched extends DmEvent {
   sender_name?: string
 }
 
+/**
+ * Per-sender summary derived from the page of events. Deduped by `user_id`,
+ * sorted newest-first by each sender's most recent message in the page.
+ *
+ * This is the field most agent flows actually want: given a query like
+ * "回 @joshua 的 DM", the agent scans `senders` for a matching handle and
+ * uses the inlined `user_id` directly — no follow-up
+ * `twitter_lookup_user_by_handle` call needed when the person has DM'd
+ * recently.
+ */
+export interface SenderSummary {
+  user_id: string
+  handle?: string
+  name?: string
+  /** Number of events in the page from this sender (any event_type with a sender_id). */
+  event_count: number
+  /** ISO timestamp of this sender's most recent event in the page. */
+  last_event_at?: string
+  /** Truncated text of the sender's most recent MessageCreate. Empty/absent for non-message events. */
+  last_message_text?: string
+  /** dm_conversation_id of the most recent event from this sender — useful when piecing together threads. */
+  last_dm_conversation_id?: string
+}
+
 export interface ListRecentDmEventsOutput {
+  /** All raw events in the page, X-ordered (newest first). Includes self-sent messages. */
   messages: DmEventEnriched[]
+  /** Per-sender rollup of `messages`. Convenience surface — same data, different shape. */
+  senders: SenderSummary[]
   result_count: number
   next_pagination_token?: string
 }
+
+const SENDER_PREVIEW_LEN = 140
 
 interface RawIncludedUser {
   id: string
@@ -498,8 +527,56 @@ export async function listRecentDmEvents(
     ok: true,
     data: {
       messages: events,
+      senders: deriveSenders(events),
       result_count: result.data?.meta?.result_count ?? events.length,
       next_pagination_token: result.data?.meta?.next_token,
     },
   }
+}
+
+/**
+ * Group events by sender_id and derive a per-sender summary.
+ *
+ * Order in the input is X's natural order — newest first. We rely on that:
+ * the FIRST event seen for a sender is also their most recent. We refine
+ * `last_message_text` by walking forward looking for a MessageCreate so a
+ * non-message event (like ParticipantsJoin) at the very top doesn't leave
+ * the preview blank. Iteration is O(n) per sender worst case but n is
+ * capped at 100 events per page; not worth a smarter pass.
+ */
+function deriveSenders(events: DmEventEnriched[]): SenderSummary[] {
+  const byUserId = new Map<string, SenderSummary>()
+  // Keep order-of-first-appearance for stable sort that respects X's
+  // natural newest-first ordering of the underlying events.
+  const order: string[] = []
+
+  for (const e of events) {
+    const uid = e.sender_id
+    if (!uid) continue
+    let summary = byUserId.get(uid)
+    if (!summary) {
+      summary = {
+        user_id: uid,
+        handle: e.sender_handle,
+        name: e.sender_name,
+        event_count: 0,
+        last_event_at: e.created_at,
+        last_dm_conversation_id: e.dm_conversation_id || undefined,
+      }
+      byUserId.set(uid, summary)
+      order.push(uid)
+    }
+    summary.event_count += 1
+    if (
+      summary.last_message_text === undefined &&
+      e.event_type === "MessageCreate" &&
+      typeof e.text === "string" &&
+      e.text.length > 0
+    ) {
+      summary.last_message_text =
+        e.text.length > SENDER_PREVIEW_LEN ? `${e.text.slice(0, SENDER_PREVIEW_LEN - 1)}…` : e.text
+    }
+  }
+
+  return order.map((uid) => byUserId.get(uid) as SenderSummary)
 }

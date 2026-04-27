@@ -103,8 +103,19 @@ const DmEventEnrichedShape = z.object({
   created_at: z.string().optional(),
 })
 
+const SenderSummaryShape = z.object({
+  user_id: z.string().describe("Numeric X user id. Pass to twitter_send_dm / twitter_list_dms as `participant_id`."),
+  handle: z.string().optional().describe("X handle without '@'."),
+  name: z.string().optional().describe("Display name."),
+  event_count: z.number().describe("Number of events in this page from this sender (any event_type)."),
+  last_event_at: z.string().optional(),
+  last_message_text: z.string().optional().describe("Truncated preview (≤140 chars) of the sender's most recent MessageCreate. Absent for senders whose only events were joins/leaves."),
+  last_dm_conversation_id: z.string().optional(),
+})
+
 const ListRecentDmEventsResultShape = {
   messages: z.array(DmEventEnrichedShape),
+  senders: z.array(SenderSummaryShape).describe("Per-sender rollup of `messages` (deduped by user_id, sorted newest-first). Use this directly to answer 'who has DM'd me' without scanning `messages`."),
   result_count: z.number(),
   next_pagination_token: z.string().optional(),
 }
@@ -555,13 +566,16 @@ Errors: { code: 'validation_failed' } when participant_id is empty. { code: 'not
     "twitter_list_recent_dm_events",
     {
       title: "List recent DM events across all conversations",
-      description: `List recent DM events from the connected X account's inbox — across every conversation, not scoped to a single recipient. Each event includes the sender's handle and display name inlined (no follow-up user lookup needed).
+      description: `List recent DM events from the connected X account's inbox — across every conversation, not scoped to a single recipient. Each event includes the sender's handle and display name inlined.
 
-When to use: the agent should discover whose DMs need attention without you needing to specify ids — e.g. "do I have any new DMs?", "summarise my recent DM activity", "list everyone who messaged me today".
-When NOT to use: to read the full chat history with one specific person (use twitter_list_dms with their participant_id — that returns more context per recipient). To send a DM (use twitter_send_dm).
-Returns: { messages, result_count, next_pagination_token? }. messages is a list of DmEventEnriched ordered newest-first per X. Each event has { dm_event_id, dm_conversation_id, event_type, text?, sender_id?, sender_handle?, sender_name?, created_at? }. The connected user's own outgoing messages also appear here (compare sender_handle to the connected account to tell incoming from outgoing). event_type is usually 'MessageCreate'; pass event_types: ['MessageCreate'] to filter out join/leave noise.
+When to use: discover whose DMs need attention WITHOUT having a recipient id up-front — "do I have any new DMs?", "summarise my recent DM activity", "list everyone who messaged me today". ALSO use this BEFORE twitter_lookup_user_by_handle when the user names someone by @handle: if the handle appears in this response's \`senders\` array, you already have their numeric user_id and can skip the lookup hop.
+When NOT to use: to read the full chat history with one specific person (use twitter_list_dms with their participant_id). To send a DM (use twitter_send_dm).
+Returns: { messages, senders, result_count, next_pagination_token? }.
+  - \`messages\`: list of DmEventEnriched newest-first per X. Each event: { dm_event_id, dm_conversation_id, event_type, text?, sender_id?, sender_handle?, sender_name?, created_at? }. event_type is usually 'MessageCreate' but can be 'ParticipantsJoin' / 'ParticipantsLeave' on group threads — pass event_types: ['MessageCreate'] to filter the join/leave noise out.
+  - \`senders\`: per-sender rollup of \`messages\`, deduped by user_id, sorted by each sender's most recent event. Each entry has { user_id, handle?, name?, event_count, last_event_at?, last_message_text?, last_dm_conversation_id? }. This is the field to scan when matching a known @handle to a numeric user_id — \`user_id\` plugs straight into twitter_send_dm / twitter_list_dms as participant_id.
+  - The connected user's own outgoing messages also appear in both \`messages\` and \`senders\` (compare to the connected account's handle to tell incoming from outgoing).
 Prerequisites: a connected X account with DM scope (dm.read).
-Errors: { code: 'not_connected' } when the X token is missing dm.read or is expired. { code: 'rate_limited' } with retry_after when X surfaces 429. { code: 'upstream_error' } for 5xx.`,
+Errors: { code: 'not_connected' } when the X token is missing dm.read or expired. { code: 'rate_limited' } with retry_after on 429. { code: 'upstream_error' } on 5xx.`,
       inputSchema: {
         max_results: z
           .number()
@@ -605,10 +619,10 @@ Errors: { code: 'not_connected' } when the X token is missing dm.read or is expi
       title: "Resolve @handle to X user id",
       description: `Look up an X user by their @handle and return the numeric user_id needed by every other DM tool.
 
-When to use: the user supplies a handle like '@joshua' (or 'joshua') and you need a numeric id to call twitter_send_dm / twitter_list_dms. Cheap read-only call; safe to use whenever you have only the handle.
-When NOT to use: you already have the numeric id (skip this hop). To search for users by name (this is exact-handle only). To list someone's tweets (out of scope).
-Returns: { user_id, username, name? }. user_id is the value to pass downstream as participant_id. username is the canonical (X may correct casing).
-Prerequisites: a connected X account; this endpoint is on the standard read scope, no DM scope required.
+When to use: you have a handle like '@joshua' (or 'joshua') and need a numeric id, AND you've already checked twitter_list_recent_dm_events without finding the handle there. This is the fallback path — the inbox lookup is cheaper because the senders summary already inlines user_id for anyone who's DM'd recently.
+When NOT to use: you already have the numeric id, OR the person has DM'd you recently and their entry appears in twitter_list_recent_dm_events' \`senders\` array (use that user_id directly — it saves a round trip). To search for users by display name or content (this is exact-handle only).
+Returns: { user_id, username, name? }. user_id plugs straight into twitter_send_dm / twitter_list_dms as participant_id. username is the canonical form (X may correct casing).
+Prerequisites: a connected X account; this endpoint uses the standard read scope, no DM scope required.
 Errors: { code: 'validation_failed' } when handle is empty or malformed (handles are alphanumeric + underscore, max 15 chars). { code: 'not_found' } when X has no user with that handle. { code: 'not_connected' } on 401/403. { code: 'rate_limited' } with retry_after on 429. { code: 'upstream_error' } on 5xx.`,
       inputSchema: {
         handle: z
