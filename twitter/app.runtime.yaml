@@ -27,6 +27,8 @@ mcp:
     - twitter_cancel_publish
     - twitter_delete_post
     - twitter_get_queue_stats
+    - twitter_send_dm
+    - twitter_list_dms
 
 integration:
   destination: "twitter"

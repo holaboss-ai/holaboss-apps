@@ -12,6 +12,7 @@ import {
   resolveHolabossTurnContext,
   updateAppOutput,
 } from "./holaboss-bridge"
+import { listDirectMessages, sendDirectMessage } from "./dm"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
@@ -61,6 +62,29 @@ const QueueStatsShape = {
   completed: z.number(),
   failed: z.number(),
   delayed: z.number(),
+}
+
+const SendDmResultShape = {
+  dm_event_id: z.string(),
+  dm_conversation_id: z.string(),
+}
+
+const DmEventShape = z.object({
+  dm_event_id: z.string(),
+  dm_conversation_id: z.string(),
+  event_type: z.string().describe("'MessageCreate' for actual messages; other values like 'ParticipantsJoin' are non-message events the agent should usually skip."),
+  text: z.string().optional(),
+  sender_id: z.string().optional().describe("Numeric X user id of the sender. Compare to the participant_id passed in to tell 'me' from 'them'."),
+  created_at: z.string().optional(),
+})
+
+const ListDmsResultShape = {
+  messages: z.array(DmEventShape),
+  result_count: z.number(),
+  next_pagination_token: z
+    .string()
+    .optional()
+    .describe("Pass back as `pagination_token` on the next call to fetch the next page. Absent on last page."),
 }
 
 async function syncAndPersist(
@@ -406,6 +430,96 @@ Returns: { waiting, active, completed, failed, delayed }.`,
     async () => {
       const stats = await getQueueStats()
       return success(stats as unknown as Record<string, unknown>)
+    },
+  )
+
+  server.registerTool(
+    "twitter_send_dm",
+    {
+      title: "Send X direct message",
+      description: `Send a direct message to a specific X user, identified by their numeric user id.
+
+When to use: the user has the recipient's numeric X user id (visible in the URL of their X DM thread, or supplied externally) and wants to send them a private message. Works for both initiating a new DM conversation AND continuing an existing one — same endpoint covers both cases.
+When NOT to use: you only have a username/handle (this tool does not look up handles). To draft a public tweet (use twitter_create_post). To send to multiple recipients (call this tool once per recipient).
+Returns: { dm_event_id, dm_conversation_id }. The DM is sent immediately (no draft / queue / schedule). dm_conversation_id can be used to identify the same thread on subsequent reads.
+Prerequisites: a connected X account with DM scope (dm.read + dm.write). X API DMs require Basic tier or higher.
+Errors: { code: 'validation_failed' } when participant_id is empty, text is empty, or text exceeds the 10000-character X limit; the error fires up-front without burning a quota call. { code: 'not_found' } when the user id doesn't exist OR you can't DM them (e.g. they don't follow you and have DMs from non-followers off). { code: 'not_connected' } when the X token is missing the dm.write scope or is expired. { code: 'rate_limited' } with retry_after when X surfaces 429. { code: 'upstream_error' } for 5xx.`,
+      inputSchema: {
+        participant_id: z
+          .string()
+          .min(1)
+          .describe("Recipient's numeric X user id. NOT the @handle. e.g. '1234567890'."),
+        text: z
+          .string()
+          .min(1)
+          .max(10_000)
+          .describe("DM body. Hard limit 10000 chars (X v2 DM limit). Empty string is rejected."),
+      },
+      outputSchema: SendDmResultShape,
+      annotations: {
+        title: "Send X direct message",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ participant_id, text }) => {
+      const result = await sendDirectMessage({ participant_id, text })
+      if (!result.ok) {
+        const extra: Record<string, unknown> = {}
+        if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after
+        return errCode(result.error.code, result.error.message, extra)
+      }
+      return success(result.data as unknown as Record<string, unknown>)
+    },
+  )
+
+  server.registerTool(
+    "twitter_list_dms",
+    {
+      title: "List DM events with a user",
+      description: `List recent DM events from the conversation with a specific X user, identified by their numeric user id.
+
+When to use: the user wants to read the chat history with a specific person on X — to catch up before replying, to extract context, or to check if a previous message was delivered.
+When NOT to use: to list all DM threads in the inbox (this tool is per-recipient only). To search messages by content (X API does not support that).
+Returns: { messages, result_count, next_pagination_token? }. messages is an array of DmEvent ordered newest-first per X. Each event has { dm_event_id, dm_conversation_id, event_type, text?, sender_id?, created_at? }. event_type is usually 'MessageCreate' for actual messages but can be 'ParticipantsJoin' / 'ParticipantsLeave' on group threads — filter to 'MessageCreate' if you only want chat content. Compare sender_id to the connected X user's id to tell whose message it is.
+Prerequisites: a connected X account with DM scope (dm.read).
+Errors: { code: 'validation_failed' } when participant_id is empty. { code: 'not_found' } when the user id doesn't exist OR no DM conversation has ever existed with them. { code: 'not_connected' } when the X token is missing dm.read or is expired. { code: 'rate_limited' } with retry_after when X surfaces 429. { code: 'upstream_error' } for 5xx.`,
+      inputSchema: {
+        participant_id: z
+          .string()
+          .min(1)
+          .describe("The other user's numeric X user id. NOT the @handle."),
+        max_results: z
+          .number()
+          .int()
+          .positive()
+          .max(100)
+          .optional()
+          .describe("Page size. Default 50, max 100 (X cap). Smaller is friendlier on agent token budgets."),
+        pagination_token: z
+          .string()
+          .optional()
+          .describe("Opaque token from the previous call's `next_pagination_token` to fetch the next page."),
+      },
+      outputSchema: ListDmsResultShape,
+      annotations: {
+        title: "List DM events with a user",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ participant_id, max_results, pagination_token }) => {
+      const result = await listDirectMessages({ participant_id, max_results, pagination_token })
+      if (!result.ok) {
+        const extra: Record<string, unknown> = {}
+        if (result.error.retry_after !== undefined) extra.retry_after = result.error.retry_after
+        return errCode(result.error.code, result.error.message, extra)
+      }
+      return success(result.data as unknown as Record<string, unknown>)
     },
   )
 
