@@ -29,7 +29,7 @@ export function enqueuePublish(payload: PublishJobPayload): string {
     : new Date().toISOString().replace("T", " ").replace("Z", "")
 
   db.prepare(
-    "INSERT INTO jobs (id, type, payload, status, run_at) VALUES (?, 'publish', ?, ?, ?)",
+    "INSERT INTO twitter_jobs (id, type, payload, status, run_at) VALUES (?, 'publish', ?, ?, ?)",
   ).run(id, JSON.stringify(payload), status, runAt)
 
   return id
@@ -38,7 +38,7 @@ export function enqueuePublish(payload: PublishJobPayload): string {
 export function getQueueStats() {
   const db = getDb()
   const rows = db
-    .prepare("SELECT status, COUNT(*) as count FROM jobs GROUP BY status")
+    .prepare("SELECT status, COUNT(*) as count FROM twitter_jobs GROUP BY status")
     .all() as Array<{ status: string; count: number }>
 
   const stats = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 }
@@ -55,7 +55,7 @@ async function syncPostOutputAfterTransition(
   postId: string,
 ): Promise<void> {
   const post = db
-    .prepare("SELECT * FROM posts WHERE id = ?")
+    .prepare("SELECT * FROM twitter_posts WHERE id = ?")
     .get(postId) as PostRecord | undefined
   if (!post) return
   // Background worker has no turn context — relies on SDK fallback to
@@ -70,19 +70,19 @@ export function startWorker() {
   const db = getDb()
 
   // Crash recovery: reset any active jobs back to waiting
-  db.prepare("UPDATE jobs SET status = 'waiting', updated_at = datetime('now') WHERE status = 'active'").run()
+  db.prepare("UPDATE twitter_jobs SET status = 'waiting', updated_at = datetime('now') WHERE status = 'active'").run()
 
   const interval = setInterval(() => {
     try {
       // Promote delayed jobs that are due
       db.prepare(
-        "UPDATE jobs SET status = 'waiting', updated_at = datetime('now') WHERE status = 'delayed' AND run_at <= datetime('now')",
+        "UPDATE twitter_jobs SET status = 'waiting', updated_at = datetime('now') WHERE status = 'delayed' AND run_at <= datetime('now')",
       ).run()
 
       // Atomically claim one waiting job
       const job = db
         .prepare(
-          "UPDATE jobs SET status = 'active', attempts = attempts + 1, updated_at = datetime('now') WHERE id = (SELECT id FROM jobs WHERE status = 'waiting' AND run_at <= datetime('now') ORDER BY run_at LIMIT 1) RETURNING *",
+          "UPDATE twitter_jobs SET status = 'active', attempts = attempts + 1, updated_at = datetime('now') WHERE id = (SELECT id FROM twitter_jobs WHERE status = 'waiting' AND run_at <= datetime('now') ORDER BY run_at LIMIT 1) RETURNING *",
         )
         .get() as JobRecord | undefined
 
@@ -91,7 +91,7 @@ export function startWorker() {
       const payload = JSON.parse(job.payload) as PublishJobPayload
 
       // Update post status to queued
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(payload.post_id)
+      db.prepare("UPDATE twitter_posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(payload.post_id)
       void syncPostOutputAfterTransition(db, payload.post_id)
 
       publisher
@@ -102,10 +102,10 @@ export function startWorker() {
         })
         .then((result) => {
           db.prepare(
-            "UPDATE jobs SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+            "UPDATE twitter_jobs SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
           ).run(job.id)
           db.prepare(
-            "UPDATE posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            "UPDATE twitter_posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
           ).run(result.external_post_id, payload.post_id)
           void syncPostOutputAfterTransition(db, payload.post_id)
         })
@@ -113,14 +113,14 @@ export function startWorker() {
           const message = err instanceof Error ? err.message : String(err)
           if (job.attempts < job.max_attempts) {
             db.prepare(
-              "UPDATE jobs SET status = 'waiting', error_message = ?, updated_at = datetime('now') WHERE id = ?",
+              "UPDATE twitter_jobs SET status = 'waiting', error_message = ?, updated_at = datetime('now') WHERE id = ?",
             ).run(message, job.id)
           } else {
             db.prepare(
-              "UPDATE jobs SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?",
+              "UPDATE twitter_jobs SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?",
             ).run(message, job.id)
             db.prepare(
-              "UPDATE posts SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?",
+              "UPDATE twitter_posts SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?",
             ).run(message, payload.post_id)
             void syncPostOutputAfterTransition(db, payload.post_id)
           }

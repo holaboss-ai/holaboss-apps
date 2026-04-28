@@ -43,10 +43,10 @@ describe("Twitter Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
+        "INSERT INTO twitter_posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
       ).run(testPostId, "Test tweet content", now, now)
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(testPostId) as PostRecord
       expect(post.content).toBe("Test tweet content")
       expect(post.status).toBe("draft")
     })
@@ -56,10 +56,10 @@ describe("Twitter Module E2E", () => {
       const db = getDb()
 
       db.prepare(
-        "UPDATE posts SET content = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE twitter_posts SET content = ?, updated_at = datetime('now') WHERE id = ?",
       ).run("Updated tweet", testPostId)
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(testPostId) as PostRecord
       expect(post.content).toBe("Updated tweet")
     })
 
@@ -68,7 +68,7 @@ describe("Twitter Module E2E", () => {
       const db = getDb()
 
       const drafts = db
-        .prepare("SELECT * FROM posts WHERE status = ?")
+        .prepare("SELECT * FROM twitter_posts WHERE status = ?")
         .all("draft") as PostRecord[]
       expect(drafts.length).toBeGreaterThanOrEqual(1)
       expect(drafts.every((p) => p.status === "draft")).toBe(true)
@@ -78,8 +78,8 @@ describe("Twitter Module E2E", () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      db.prepare("DELETE FROM posts WHERE id = ?").run(testPostId)
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId)
+      db.prepare("DELETE FROM twitter_posts WHERE id = ?").run(testPostId)
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(testPostId)
       expect(post).toBeUndefined()
     })
   })
@@ -97,28 +97,28 @@ describe("Twitter Module E2E", () => {
       const content = `E2E lifecycle ${Date.now()}`
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
+        "INSERT INTO twitter_posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?)",
       ).run(id, content, now, now)
 
       // Verify in list
-      const posts = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT 10").all() as PostRecord[]
+      const posts = db.prepare("SELECT * FROM twitter_posts ORDER BY created_at DESC LIMIT 10").all() as PostRecord[]
       expect(posts.find((p) => p.id === id)).toBeDefined()
 
       // Update status to queued
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(id)
-      const queued = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      db.prepare("UPDATE twitter_posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(id)
+      const queued = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(id) as PostRecord
       expect(queued.status).toBe("queued")
 
       // Simulate publish success
       db.prepare(
-        "UPDATE posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+        "UPDATE twitter_posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
       ).run("ext-123", id)
-      const published = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      const published = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(id) as PostRecord
       expect(published.status).toBe("published")
       expect(published.external_post_id).toBe("ext-123")
 
       // Cleanup
-      db.prepare("DELETE FROM posts WHERE id = ?").run(id)
+      db.prepare("DELETE FROM twitter_posts WHERE id = ?").run(id)
     })
   })
 
@@ -213,7 +213,7 @@ describe("Twitter Module E2E", () => {
       })
 
       const db = getDb()
-      const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as { status: string }
+      const job = db.prepare("SELECT * FROM twitter_jobs WHERE id = ?").get(jobId) as { status: string }
       expect(job.status).toBe("delayed")
 
       const stats = getQueueStats()

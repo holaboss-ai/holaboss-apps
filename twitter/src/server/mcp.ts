@@ -176,10 +176,10 @@ Errors: { code: 'internal' } on unexpected exception.`,
         const id = randomUUID()
         const now = new Date().toISOString()
         db.prepare(
-          "INSERT INTO posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
+          "INSERT INTO twitter_posts (id, content, status, scheduled_at, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?)",
         ).run(id, content, scheduled_at ?? null, now, now)
 
-        const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+        const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(id) as PostRecord
         const synced = await syncAndPersist(db, post, extra.requestInfo?.headers)
         return success(synced as unknown as Record<string, unknown>)
       } catch (error) {
@@ -217,7 +217,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     },
     async ({ post_id, content, scheduled_at }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
 
       const updates: string[] = ["updated_at = datetime('now')"]
@@ -226,8 +226,8 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
       if (scheduled_at) { updates.push("scheduled_at = ?"); params.push(scheduled_at) }
       params.push(post_id)
 
-      db.prepare(`UPDATE posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare(`UPDATE twitter_posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
+      const updated = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord
       const synced = await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success(synced as unknown as Record<string, unknown>)
     },
@@ -259,10 +259,10 @@ Returns: array of PostRecord. Empty array if none match.`,
       let rows: PostRecord[]
       if (status) {
         rows = db
-          .prepare("SELECT * FROM posts WHERE status = ? ORDER BY created_at DESC LIMIT ?")
+          .prepare("SELECT * FROM twitter_posts WHERE status = ? ORDER BY created_at DESC LIMIT ?")
           .all(status, max) as PostRecord[]
       } else {
-        rows = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT ?").all(max) as PostRecord[]
+        rows = db.prepare("SELECT * FROM twitter_posts ORDER BY created_at DESC LIMIT ?").all(max) as PostRecord[]
       }
       return text(rows)
     },
@@ -291,7 +291,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       return success(post as unknown as Record<string, unknown>)
     },
@@ -322,7 +322,7 @@ Errors: { code: 'not_found' } if post_id is unknown. NOTE: re-calling on an alre
     },
     async ({ post_id }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
 
       const userId = process.env.HOLABOSS_USER_ID ?? ""
@@ -333,8 +333,8 @@ Errors: { code: 'not_found' } if post_id is unknown. NOTE: re-calling on an alre
         scheduled_at: post.scheduled_at,
       })
 
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare("UPDATE twitter_posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
+      const updated = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success({ job_id: jobId, status: "queued" as const })
     },
@@ -365,7 +365,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     async ({ post_id }) => {
       const db = getDb()
       const post = db
-        .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
+        .prepare("SELECT status, error_message, published_at, updated_at FROM twitter_posts WHERE id = ?")
         .get(post_id) as Record<string, unknown> | undefined
       if (!post) return errCode("not_found", "Post not found")
       return success(post)
@@ -396,13 +396,13 @@ Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', cu
     },
     async ({ post_id }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       if (post.status !== "scheduled" && post.status !== "queued") {
         return errCode("invalid_state", `Cannot cancel post in '${post.status}' state`, { current_status: post.status, allowed_from: ["queued", "scheduled"] })
       }
-      db.prepare("UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare("UPDATE twitter_posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
+      const updated = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success({ cancelled: true as const })
     },
@@ -432,11 +432,11 @@ Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', cu
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM twitter_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       if (post.status === "queued" || post.status === "scheduled") return errCode("invalid_state", `Cannot delete post in '${post.status}' state. Cancel it first.`, { current_status: post.status, hint: "call twitter_cancel_publish first" })
       if (post.status === "published") return errCode("invalid_state", "Cannot delete a published post", { current_status: "published" })
-      db.prepare("DELETE FROM posts WHERE id = ?").run(post_id)
+      db.prepare("DELETE FROM twitter_posts WHERE id = ?").run(post_id)
       if (post.output_id) {
         try {
           await updateAppOutput(post.output_id, { status: "deleted" })
