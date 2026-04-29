@@ -32,6 +32,8 @@ mcp:
     - "attio_list_tasks"
     - "attio_list_records_in_list"
     - "attio_add_to_list"
+    - "attio_sync_crm"
+    - "attio_set_sync_enabled"
 
 integration:
   destination: "attio"

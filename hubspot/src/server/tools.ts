@@ -10,6 +10,7 @@ import {
   deepLinkFor,
 } from "./hubspot-client"
 import { wrapTool } from "./audit"
+import { isSyncEnabled, setSyncEnabled, syncCrm } from "./sync"
 import type {
   HubspotError,
   HubspotRecord,
@@ -813,6 +814,71 @@ export async function createTaskImpl(
   }
 }
 
+// -------------------- Sync (local mirror) --------------------
+
+export interface SyncCrmInput {
+  full?: boolean
+  objects?: Array<"contacts" | "companies" | "deals">
+}
+export async function syncCrmImpl(
+  input: SyncCrmInput,
+): Promise<
+  Result<
+    {
+      total_inserted: number
+      total_updated: number
+      rate_limited: boolean
+      per_object: Array<{
+        object_slug: string
+        records_seen: number
+        records_inserted: number
+        records_updated: number
+        errors_count: number
+      }>
+    } & ToolSuccessMeta,
+    HubspotError
+  >
+> {
+  try {
+    const r = await syncCrm({ full: input.full, objects: input.objects })
+    return {
+      ok: true,
+      data: {
+        total_inserted: r.total_inserted,
+        total_updated: r.total_updated,
+        rate_limited: r.rate_limited,
+        per_object: r.per_object.map((p) => ({
+          object_slug: p.object_slug,
+          records_seen: p.records_seen,
+          records_inserted: p.records_inserted,
+          records_updated: p.records_updated,
+          errors_count: p.errors.length,
+        })),
+        result_summary: `Synced ${r.total_inserted + r.total_updated} record(s) across ${r.per_object.length} object(s)`,
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+    }
+  }
+}
+
+export interface SetSyncEnabledInput { enabled: boolean }
+export async function setSyncEnabledImpl(
+  input: SetSyncEnabledInput,
+): Promise<Result<{ enabled: boolean } & ToolSuccessMeta, HubspotError>> {
+  setSyncEnabled(input.enabled)
+  return {
+    ok: true,
+    data: {
+      enabled: isSyncEnabled(),
+      result_summary: input.enabled ? "HubSpot sync enabled" : "HubSpot sync disabled",
+    },
+  }
+}
+
 // -------------------- registerTools --------------------
 
 export function registerTools(server: McpServer): void {
@@ -1369,5 +1435,79 @@ Returns: { task_id }.`,
       },
     },
     async (args) => asText(await createTask(args)),
+  )
+
+  const syncCrmTool = wrapTool("hubspot_sync_crm", syncCrmImpl)
+  const setSyncEnabledTool = wrapTool("hubspot_set_sync_enabled", setSyncEnabledImpl)
+
+  const SyncObjectShape = z.object({
+    object_slug: z.string(),
+    records_seen: z.number(),
+    records_inserted: z.number(),
+    records_updated: z.number(),
+    errors_count: z.number(),
+  })
+  const SyncCrmShape = {
+    total_inserted: z.number(),
+    total_updated: z.number(),
+    rate_limited: z.boolean(),
+    per_object: z.array(SyncObjectShape),
+    ...ToolSuccessMetaShape,
+  }
+  const SetSyncEnabledShape = { enabled: z.boolean(), ...ToolSuccessMetaShape }
+
+  server.registerTool(
+    "hubspot_sync_crm",
+    {
+      title: "Sync HubSpot CRM",
+      description: `Pull records from HubSpot's standard objects (contacts, companies, deals) into the local mirror tables (hubspot_contacts, hubspot_companies, hubspot_deals). Runs automatically every 30 minutes; full reconciliation runs daily. Use this tool to force an immediate refresh.
+
+When to use: the user asks "sync my CRM now", or after creating/updating records via hubspot_create_contact / hubspot_update_contact and you want the mirror to reflect them before answering downstream questions.
+Default mode (full=false): incremental — pulls records modified since last sync. Misses deletions.
+Full mode (full=true): paginates everything (capped at 5000 per object). Detects deletions but more expensive.
+Returns: { total_inserted, total_updated, rate_limited, per_object: [{ object_slug, records_seen, records_inserted, records_updated, errors_count }] }.`,
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("If true, paginate everything (capped at 5000 per object). Default false = incremental since last sync."),
+        objects: z
+          .array(z.enum(["contacts", "companies", "deals"]))
+          .optional()
+          .describe("Restrict to a subset of standard objects. Default: all three."),
+      },
+      outputSchema: SyncCrmShape,
+      annotations: {
+        title: "Sync HubSpot CRM",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => asText(await syncCrmTool(args)),
+  )
+
+  server.registerTool(
+    "hubspot_set_sync_enabled",
+    {
+      title: "Enable or disable HubSpot sync",
+      description: `Turn the 30-minute auto-sync of HubSpot records on or off. The mirror tables still serve stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume CRM syncing.
+Returns: { enabled, result_summary }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set HubSpot sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => asText(await setSyncEnabledTool(args)),
   )
 }
