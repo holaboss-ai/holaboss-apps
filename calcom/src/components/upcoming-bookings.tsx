@@ -1,10 +1,26 @@
-import { useEffect, useState } from "react"
-import type { BookingSummary } from "../lib/types"
+import { useEffect, useMemo, useState } from "react"
+import { Calendar } from "./ui/calendar"
+import type { UpcomingBooking } from "../routes/api/upcoming-bookings"
+
+function sameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
 
 export function UpcomingBookings() {
-  const [bookings, setBookings] = useState<BookingSummary[]>([])
+  const [bookings, setBookings] = useState<UpcomingBooking[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<Date>(() => startOfDay(new Date()))
 
   useEffect(() => {
     let cancelled = false
@@ -12,10 +28,8 @@ export function UpcomingBookings() {
       try {
         const r = await fetch("/api/upcoming-bookings")
         if (r.ok && !cancelled) {
-          const data = (await r.json()) as { bookings: BookingSummary[]; error?: string }
-          if (data.error) {
-            setError(data.error)
-          }
+          const data = (await r.json()) as { bookings: UpcomingBooking[]; error?: string }
+          if (data.error) setError(data.error)
           setBookings(data.bookings)
           setLoading(false)
         }
@@ -34,64 +48,89 @@ export function UpcomingBookings() {
     }
   }, [])
 
-  if (loading) {
-    return (
-      <div className="border-b border-border px-6 py-4 text-xs text-muted-foreground">
-        Loading upcoming bookings…
-      </div>
-    )
-  }
+  const meetingDays = useMemo(() => {
+    return bookings
+      .map((b) => startOfDay(new Date(b.start_time)))
+      .filter((d) => !Number.isNaN(d.getTime()))
+  }, [bookings])
 
-  if (error && bookings.length === 0) {
-    return (
-      <div className="border-b border-border px-6 py-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upcoming</div>
-        <div className="mt-2 text-xs text-destructive">{error}</div>
-      </div>
-    )
-  }
-
-  if (bookings.length === 0) {
-    return (
-      <div className="border-b border-border px-6 py-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upcoming</div>
-        <div className="mt-2 text-xs text-muted-foreground">No upcoming bookings.</div>
-      </div>
-    )
-  }
+  const selectedBookings = useMemo(() => {
+    return bookings.filter((b) => {
+      const d = new Date(b.start_time)
+      return !Number.isNaN(d.getTime()) && sameDay(d, selected)
+    })
+  }, [bookings, selected])
 
   return (
-    <div className="border-b border-border px-6 py-4">
+    <div className="border-b border-border px-6 py-5">
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Upcoming · {bookings.length}
       </div>
-      <ul className="space-y-2">
-        {bookings.slice(0, 5).map((b) => {
-          const start = new Date(b.start_time)
-          const attendeeName = b.attendees[0]?.name ?? b.attendees[0]?.email ?? "—"
-          return (
-            <li key={b.id} className="rounded-md border border-border bg-card px-3 py-2 text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <div className="font-medium text-foreground">{b.title}</div>
-                <div className="font-mono text-xs text-muted-foreground">
-                  {start.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })}
-                </div>
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                with {attendeeName}
-                {b.meeting_url && (
-                  <>
-                    {" · "}
-                    <a href={b.meeting_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                      Join
-                    </a>
-                  </>
-                )}
-              </div>
-            </li>
-          )
-        })}
-      </ul>
+
+      {loading ? (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      ) : (
+        <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+          <Calendar
+            mode="single"
+            selected={selected}
+            onSelect={(d) => d && setSelected(startOfDay(d))}
+            modifiers={{ hasMeeting: meetingDays }}
+            modifiersClassNames={{
+              hasMeeting:
+                "relative after:absolute after:bottom-1 after:left-1/2 after:h-1 after:w-1 after:-translate-x-1/2 after:rounded-full after:bg-primary",
+            }}
+          />
+
+          <div>
+            <div className="mb-2 text-xs text-muted-foreground">
+              {selected.toLocaleDateString(undefined, {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+              })}
+            </div>
+            {error && bookings.length === 0 && (
+              <div className="text-xs text-destructive">{error}</div>
+            )}
+            {selectedBookings.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No meetings.</div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {selectedBookings.map((b) => {
+                  const start = new Date(b.start_time)
+                  const attendee =
+                    b.attendees[0]?.name || b.attendees[0]?.email || "—"
+                  return (
+                    <li key={b.uid} className="flex items-baseline gap-3 py-2 text-sm">
+                      <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
+                        {start.toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <span className="flex-1 truncate text-foreground">{b.title}</span>
+                      <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                        {attendee}
+                      </span>
+                      {b.meeting_url && (
+                        <a
+                          href={b.meeting_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-xs text-primary hover:underline"
+                        >
+                          Join
+                        </a>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
