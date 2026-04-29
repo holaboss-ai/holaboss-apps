@@ -59,6 +59,9 @@ function renameLegacyTablesIfNeeded(db: Database.Database): void {
 }
 
 function ensureSchema(db: Database.Database): void {
+  // Schema follows the cross-platform metrics convention documented in
+  // holaOS/docs/plans/2026-04-28-post-metrics-convention.md. Same shape
+  // as twitter's so dashboards UNION cleanly across platforms.
   db.exec(`
     CREATE TABLE IF NOT EXISTS linkedin_posts (
       id TEXT PRIMARY KEY,
@@ -85,6 +88,53 @@ function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS linkedin_post_metrics (
+      post_id     TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      impressions INTEGER,
+      likes       INTEGER,
+      comments    INTEGER,
+      shares      INTEGER,
+      raw         TEXT,
+      PRIMARY KEY (post_id, captured_at)
+    );
+
+    CREATE TABLE IF NOT EXISTS linkedin_post_metrics_daily (
+      post_id     TEXT NOT NULL,
+      day         TEXT NOT NULL,
+      impressions INTEGER,
+      likes       INTEGER,
+      comments    INTEGER,
+      shares      INTEGER,
+      PRIMARY KEY (post_id, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS linkedin_metrics_runs (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at       TEXT NOT NULL,
+      finished_at      TEXT,
+      kind             TEXT NOT NULL DEFAULT 'refresh',
+      posts_considered INTEGER NOT NULL DEFAULT 0,
+      posts_refreshed  INTEGER NOT NULL DEFAULT 0,
+      posts_skipped    INTEGER NOT NULL DEFAULT 0,
+      posts_deleted    INTEGER NOT NULL DEFAULT 0,
+      errors_json      TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS linkedin_api_usage (
+      date               TEXT PRIMARY KEY,
+      calls_succeeded    INTEGER NOT NULL DEFAULT 0,
+      calls_failed       INTEGER NOT NULL DEFAULT 0,
+      calls_rate_limited INTEGER NOT NULL DEFAULT 0,
+      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS linkedin_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   const ensureColumn = (column: string, type: string) => {
@@ -97,12 +147,22 @@ function ensureSchema(db: Database.Database): void {
   ensureColumn("scheduled_at", "TEXT")
   ensureColumn("published_at", "TEXT")
   ensureColumn("error_message", "TEXT")
+  // Set when LinkedIn API returns 404 / 410 for a post we've been
+  // tracking — keeps the row + historical metrics, stops refresh.
+  ensureColumn("deleted_at", "TEXT")
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_linkedin_posts_status ON linkedin_posts(status);
     CREATE INDEX IF NOT EXISTS idx_linkedin_posts_created_at ON linkedin_posts(created_at);
     CREATE INDEX IF NOT EXISTS idx_linkedin_posts_output_id ON linkedin_posts(output_id);
+    CREATE INDEX IF NOT EXISTS idx_linkedin_posts_published_at
+      ON linkedin_posts(published_at)
+      WHERE status = 'published' AND deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_linkedin_jobs_status_run_at ON linkedin_jobs(status, run_at);
+    CREATE INDEX IF NOT EXISTS idx_linkedin_post_metrics_captured
+      ON linkedin_post_metrics(captured_at);
+    CREATE INDEX IF NOT EXISTS idx_linkedin_metrics_runs_started
+      ON linkedin_metrics_runs(started_at DESC);
   `)
 }
 

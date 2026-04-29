@@ -12,6 +12,12 @@ import {
   resolveHolabossTurnContext,
   updateAppOutput,
 } from "./holaboss-bridge"
+import {
+  isMetricsRefreshEnabled,
+  refreshPostMetrics,
+  setMetricsRefreshEnabled,
+} from "./metrics"
+import { rollupAndPrune } from "./metrics-rollup"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
@@ -408,6 +414,147 @@ Returns: { waiting, active, completed, failed, delayed }.`,
     async () => {
       const stats = await getQueueStats()
       return success(stats as unknown as Record<string, unknown>)
+    },
+  )
+
+  // ─── Post metrics ────────────────────────────────────────────────
+  // See holaOS/docs/plans/2026-04-28-post-metrics-convention.md.
+
+  const RefreshPostMetricsResultShape = {
+    run_id: z.number(),
+    posts_considered: z.number(),
+    posts_refreshed: z.number(),
+    posts_skipped: z.number(),
+    posts_deleted: z.number(),
+    rate_limited: z.boolean(),
+    errors: z.array(z.object({ post_id: z.string(), error: z.string() })),
+  }
+
+  server.registerTool(
+    "linkedin_refresh_post_metrics",
+    {
+      title: "Refresh engagement metrics for LinkedIn posts",
+      description: `Pull latest likes / comments / shares for published LinkedIn posts via the socialActions endpoint and append a snapshot row to linkedin_post_metrics. The in-process scheduler already runs this every 5 minutes against due posts (tier policy: 5min < 1h, 30min < 24h, 6h < 7d, 1d < 30d, frozen after) — so manual calls are only needed when you want to force a refresh sooner than the schedule, or to bring in a specific post.
+
+When to use: a user asks "how is my latest LinkedIn post doing?" or "refresh metrics now" or wants metrics on a post older than 7 days (which the first-launch backfill would otherwise have skipped). For scheduled / unattended polling, do nothing — the in-process scheduler handles it.
+When NOT to use: as a substitute for linkedin_list_posts (this only writes metrics; it doesn't return post content). For posts that haven't been published yet (status != 'published') — they have no upstream id to query.
+Returns: { run_id, posts_considered, posts_refreshed, posts_skipped, posts_deleted, rate_limited, errors[] }.
+Note: LinkedIn's basic socialActions endpoint doesn't return reach / impressions; that field stays null in the snapshot. Likes / comments / shares are populated from the upstream summaries.
+Errors: structured-result-only — individual post failures are reported in errors[]. A 429 reflects rate_limited=true and the run truncates early; the next scheduled tick retries.`,
+      inputSchema: {
+        post_ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Restrict to specific local post ids. Empty/omitted = all currently due posts per tier policy.",
+          ),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            "Bypass tier policy + the 7-day backfill bound. Use sparingly — burns API quota.",
+          ),
+      },
+      outputSchema: RefreshPostMetricsResultShape,
+      annotations: {
+        title: "Refresh engagement metrics for LinkedIn posts",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ post_ids, force }) => {
+      try {
+        const result = await refreshPostMetrics({
+          post_ids,
+          force: Boolean(force),
+        })
+        return success(result as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_refresh_failed",
+        )
+      }
+    },
+  )
+
+  const RollupResultShape = {
+    run_id: z.number(),
+    days_rolled: z.number(),
+    rows_pruned: z.number(),
+  }
+
+  server.registerTool(
+    "linkedin_rollup_post_metrics",
+    {
+      title: "Aggregate daily LinkedIn metrics + prune old snapshots",
+      description: `Roll up raw metrics snapshots into the daily table and delete raw snapshots older than 90 days. The scheduler runs this once per ~24h automatically; manual calls are useful right after a bulk backfill, or to force housekeeping on a stale workspace.
+
+When to use: only when you explicitly want to force the daily aggregation right now. For routine operation, do nothing — the scheduler handles it.
+When NOT to use: as a way to "clean up" data — that is what the scheduled call is for.
+Returns: { run_id, days_rolled, rows_pruned }.
+Errors: failures bubble as { code: 'internal' } with the message.`,
+      inputSchema: {},
+      outputSchema: RollupResultShape,
+      annotations: {
+        title: "Aggregate daily LinkedIn metrics + prune old snapshots",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        const result = rollupAndPrune()
+        return success(result as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_rollup_failed",
+        )
+      }
+    },
+  )
+
+  const SetRefreshResultShape = { enabled: z.boolean() }
+
+  server.registerTool(
+    "linkedin_set_metrics_refresh",
+    {
+      title: "Pause or resume the LinkedIn metrics scheduler",
+      description: `Flip the metrics_refresh_enabled flag stored in linkedin_settings. When disabled, the in-process 5-minute scheduler skips refresh ticks (the rollup tick is unaffected — it operates on already-captured rows). State persists in the workspace db so it survives restart.
+
+When to use: a user asks to pause / resume metrics polling, e.g. "stop refreshing linkedin metrics for now" or "save quota — disable metrics".
+When NOT to use: as a one-time skip — that's not exposed. As a way to mute a single post — no per-post mute exists yet.
+Returns: { enabled } reflecting the new state.
+Errors: { code: 'internal' } on db write failure.`,
+      inputSchema: {
+        enabled: z
+          .boolean()
+          .describe("true to resume scheduled refreshes, false to pause."),
+      },
+      outputSchema: SetRefreshResultShape,
+      annotations: {
+        title: "Pause or resume the LinkedIn metrics scheduler",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ enabled }) => {
+      try {
+        setMetricsRefreshEnabled(Boolean(enabled))
+        return success({ enabled: isMetricsRefreshEnabled() })
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_setting_failed",
+        )
+      }
     },
   )
 

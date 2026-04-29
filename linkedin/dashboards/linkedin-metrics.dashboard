@@ -1,0 +1,86 @@
+title: LinkedIn Metrics
+description: Engagement across published LinkedIn posts, refreshed every 5 minutes by the in-process scheduler.
+
+panels:
+  - type: kpi
+    title: Total Likes
+    query: |
+      SELECT COALESCE(SUM(latest), 0) AS value FROM (
+        SELECT MAX(likes) AS latest FROM linkedin_post_metrics GROUP BY post_id
+      )
+
+  - type: kpi
+    title: Total Comments
+    query: |
+      SELECT COALESCE(SUM(latest), 0) AS value FROM (
+        SELECT MAX(comments) AS latest FROM linkedin_post_metrics GROUP BY post_id
+      )
+
+  - type: kpi
+    title: Total Shares
+    query: |
+      SELECT COALESCE(SUM(latest), 0) AS value FROM (
+        SELECT MAX(shares) AS latest FROM linkedin_post_metrics GROUP BY post_id
+      )
+
+  - type: kpi
+    title: API calls today
+    query: |
+      SELECT COALESCE(calls_succeeded, 0) AS value
+      FROM linkedin_api_usage
+      WHERE date = date('now')
+
+  - type: data_view
+    title: Top posts (last 7 days)
+    query: |
+      SELECT
+        substr(p.content, 1, 100) AS content,
+        p.status                  AS status,
+        COALESCE(m.likes, 0)      AS likes,
+        COALESCE(m.comments, 0)   AS comments,
+        COALESCE(m.shares, 0)     AS shares,
+        p.published_at            AS published_at
+      FROM linkedin_posts p
+      LEFT JOIN (
+        SELECT
+          post_id,
+          MAX(likes)    AS likes,
+          MAX(comments) AS comments,
+          MAX(shares)   AS shares
+        FROM linkedin_post_metrics
+        GROUP BY post_id
+      ) m ON m.post_id = p.id
+      WHERE p.status = 'published'
+        AND p.deleted_at IS NULL
+        AND p.published_at >= datetime('now', '-7 days')
+      ORDER BY likes DESC
+      LIMIT 25
+    views:
+      - type: table
+        columns: [content, status, likes, comments, shares, published_at]
+      - type: board
+        group_by: status
+        card_title: content
+        card_subtitle: likes
+    default_view: table
+
+  - type: data_view
+    title: Recent scheduler runs
+    query: |
+      SELECT
+        started_at,
+        kind,
+        posts_considered,
+        posts_refreshed,
+        posts_skipped,
+        posts_deleted,
+        CASE
+          WHEN errors_json IS NULL THEN ''
+          ELSE substr(errors_json, 1, 80)
+        END AS errors
+      FROM linkedin_metrics_runs
+      ORDER BY started_at DESC
+      LIMIT 25
+    views:
+      - type: table
+        columns: [started_at, kind, posts_considered, posts_refreshed, posts_skipped, posts_deleted, errors]
