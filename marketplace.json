@@ -126,7 +126,7 @@
         "calendar"
       ],
       "path": "calcom",
-      "provider_id": "calcom",
+      "provider_id": "cal",
       "credential_source": "platform",
       "is_hidden": false,
       "is_coming_soon": false

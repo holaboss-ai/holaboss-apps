@@ -30,7 +30,7 @@ mcp:
     - calcom_set_sync_enabled
 
 integration:
-  destination: "calcom"
+  destination: "cal"
   credential_source: "platform"
   holaboss_user_id_required: true
 
