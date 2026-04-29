@@ -27,6 +27,8 @@ mcp:
     - gmail_get_send_status
     - gmail_delete_draft
     - gmail_list_drafts
+    - gmail_sync_threads
+    - gmail_set_sync_enabled
 
 integration:
   destination: "gmail"

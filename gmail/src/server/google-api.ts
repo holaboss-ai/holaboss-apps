@@ -84,3 +84,38 @@ export async function searchEmails(query: string, maxResults = 10): Promise<Arra
   const data = await gfetch<{ messages?: Array<{ id: string; threadId: string; snippet: string }> }>(`${GMAIL_BASE}/messages?q=${q}&maxResults=${maxResults}`)
   return data.messages ?? []
 }
+
+// Sync helpers — used by sync.ts. Same proxy auth as the rest, but
+// with a result envelope instead of throw, so the sync engine can
+// treat 429 / 4xx as soft errors and keep running.
+
+export interface ThreadListResponse {
+  threads?: Array<{ id: string; historyId?: string; snippet?: string }>
+  nextPageToken?: string
+  resultSizeEstimate?: number
+}
+
+export interface ThreadMetadataResponse {
+  id: string
+  historyId?: string
+  messages?: Array<{
+    id: string
+    labelIds?: string[]
+    snippet?: string
+    payload?: { headers?: Array<{ name: string; value: string }> }
+    internalDate?: string
+  }>
+}
+
+export async function gmailProxy<T>(
+  url: string,
+  init?: { method?: string; body?: unknown },
+): Promise<{ data: T | null; status: number; headers: Record<string, string> }> {
+  return google.proxy<T>({
+    method: (init?.method ?? "GET") as "GET" | "POST",
+    endpoint: url,
+    ...(init?.body !== undefined ? { body: init.body } : {}),
+  })
+}
+
+export const GMAIL_API_BASE = GMAIL_BASE

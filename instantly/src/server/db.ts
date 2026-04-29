@@ -57,6 +57,12 @@ function renameLegacyTablesIfNeeded(db: Database.Database): void {
 }
 
 export function migrate(db: Database.Database) {
+  // instantly_agent_actions = audit log (kept).
+  //
+  // instantly_campaigns / instantly_leads mirror the user's cold
+  // email campaigns and the leads on them, refreshed every 30
+  // minutes. Agent answers "what campaigns are running / who
+  // replied / what's the bounce rate" against the mirror.
   db.exec(`
     CREATE TABLE IF NOT EXISTS instantly_agent_actions (
       id              TEXT PRIMARY KEY,
@@ -73,8 +79,66 @@ export function migrate(db: Database.Database) {
       error_message   TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS instantly_campaigns (
+      record_id        TEXT PRIMARY KEY,
+      name             TEXT,
+      status           TEXT,
+      sent_count       INTEGER,
+      open_count       INTEGER,
+      reply_count      INTEGER,
+      bounce_count     INTEGER,
+      raw              TEXT,
+      created_at       TEXT,
+      updated_at       TEXT,
+      synced_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS instantly_leads (
+      record_id       TEXT PRIMARY KEY,
+      email           TEXT,
+      first_name      TEXT,
+      last_name       TEXT,
+      company         TEXT,
+      status          TEXT,
+      campaign_id     TEXT,
+      raw             TEXT,
+      created_at      TEXT,
+      updated_at      TEXT,
+      synced_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS instantly_sync_runs (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at        TEXT NOT NULL,
+      finished_at       TEXT,
+      kind              TEXT NOT NULL DEFAULT 'incremental',
+      object_slug       TEXT NOT NULL,
+      records_seen      INTEGER NOT NULL DEFAULT 0,
+      records_inserted  INTEGER NOT NULL DEFAULT 0,
+      records_updated   INTEGER NOT NULL DEFAULT 0,
+      errors_json       TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS instantly_api_usage (
+      date               TEXT PRIMARY KEY,
+      calls_succeeded    INTEGER NOT NULL DEFAULT 0,
+      calls_failed       INTEGER NOT NULL DEFAULT 0,
+      calls_rate_limited INTEGER NOT NULL DEFAULT 0,
+      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS instantly_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_instantly_agent_actions_timestamp ON instantly_agent_actions (timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_instantly_agent_actions_tool ON instantly_agent_actions (tool_name, timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_instantly_leads_email ON instantly_leads(email);
+    CREATE INDEX IF NOT EXISTS idx_instantly_leads_campaign ON instantly_leads(campaign_id);
+    CREATE INDEX IF NOT EXISTS idx_instantly_campaigns_status ON instantly_campaigns(status);
+    CREATE INDEX IF NOT EXISTS idx_instantly_sync_runs_started ON instantly_sync_runs(started_at DESC);
   `)
 }
 

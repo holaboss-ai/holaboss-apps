@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 import { apiDelete, apiGet, apiPost } from "./instantly-client"
 import { wrapTool } from "./audit"
+import { isSyncEnabled, setSyncEnabled, syncOutreach } from "./sync"
 import type {
   CampaignDetails,
   CampaignStats,
@@ -958,6 +959,68 @@ const SendTestEmailShape = {
   ...ToolSuccessMetaShape,
 }
 
+// -------------------- Sync (local mirror) --------------------
+
+export interface SyncOutreachInput { full?: boolean }
+export async function syncOutreachImpl(
+  input: SyncOutreachInput,
+): Promise<
+  Result<
+    {
+      total_inserted: number
+      total_updated: number
+      rate_limited: boolean
+      per_object: Array<{
+        object_slug: string
+        records_seen: number
+        records_inserted: number
+        records_updated: number
+        errors_count: number
+      }>
+    } & ToolSuccessMeta,
+    InstantlyError
+  >
+> {
+  try {
+    const r = await syncOutreach({ full: input.full })
+    return {
+      ok: true,
+      data: {
+        total_inserted: r.total_inserted,
+        total_updated: r.total_updated,
+        rate_limited: r.rate_limited,
+        per_object: r.per_object.map((p) => ({
+          object_slug: p.object_slug,
+          records_seen: p.records_seen,
+          records_inserted: p.records_inserted,
+          records_updated: p.records_updated,
+          errors_count: p.errors.length,
+        })),
+        result_summary: `Synced ${r.total_inserted + r.total_updated} record(s) across ${r.per_object.length} object(s)`,
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+    }
+  }
+}
+
+export interface SetSyncEnabledInput { enabled: boolean }
+export async function setSyncEnabledImpl(
+  input: SetSyncEnabledInput,
+): Promise<Result<{ enabled: boolean } & ToolSuccessMeta, InstantlyError>> {
+  setSyncEnabled(input.enabled)
+  return {
+    ok: true,
+    data: {
+      enabled: isSyncEnabled(),
+      result_summary: input.enabled ? "Instantly sync enabled" : "Instantly sync disabled",
+    },
+  }
+}
+
 export function registerTools(server: McpServer): void {
   const getConnectionStatus = wrapTool("instantly_get_connection_status", getConnectionStatusImpl)
   const listCampaigns = wrapTool("instantly_list_campaigns", listCampaignsImpl)
@@ -967,6 +1030,8 @@ export function registerTools(server: McpServer): void {
   const resumeCampaign = wrapTool("instantly_resume_campaign", resumeCampaignImpl)
   const listLeads = wrapTool("instantly_list_leads", listLeadsImpl)
   const addLeadToCampaign = wrapTool("instantly_add_lead_to_campaign", addLeadToCampaignImpl)
+  const syncOutreachTool = wrapTool("instantly_sync_outreach", syncOutreachImpl)
+  const setSyncEnabledTool = wrapTool("instantly_set_sync_enabled", setSyncEnabledImpl)
   const removeLeadFromCampaign = wrapTool(
     "instantly_remove_lead_from_campaign",
     removeLeadFromCampaignImpl,
@@ -1362,5 +1427,68 @@ Errors: { code: 'not_found' } if campaign or step doesn't exist. { code: 'valida
       },
     },
     async (args) => asText(await sendTestEmail(args)),
+  )
+
+  const SyncObjectShape = z.object({
+    object_slug: z.string(),
+    records_seen: z.number(),
+    records_inserted: z.number(),
+    records_updated: z.number(),
+    errors_count: z.number(),
+  })
+  const SyncOutreachShape = {
+    total_inserted: z.number(),
+    total_updated: z.number(),
+    rate_limited: z.boolean(),
+    per_object: z.array(SyncObjectShape),
+    ...ToolSuccessMetaShape,
+  }
+  const SetSyncEnabledShape = { enabled: z.boolean(), ...ToolSuccessMetaShape }
+
+  server.registerTool(
+    "instantly_sync_outreach",
+    {
+      title: "Sync Instantly outreach",
+      description: `Pull Instantly campaigns + leads into local mirror tables (instantly_campaigns, instantly_leads). Runs automatically every 30 minutes. Use this tool to force an immediate refresh.
+
+When to use: the user asks "sync my Instantly now", or after adding/pausing campaigns and you want the mirror to reflect the change before answering "what campaigns are running / who replied?".
+Default mode: pulls everything (Instantly v2 has no incremental cursor — paginate via starting_after).
+Returns: { total_inserted, total_updated, rate_limited, per_object: [...] }.`,
+      inputSchema: {
+        full: z.boolean().optional().describe("Reserved; sync always paginates the full list."),
+      },
+      outputSchema: SyncOutreachShape,
+      annotations: {
+        title: "Sync Instantly outreach",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => asText(await syncOutreachTool(args)),
+  )
+
+  server.registerTool(
+    "instantly_set_sync_enabled",
+    {
+      title: "Enable or disable Instantly sync",
+      description: `Turn the 30-minute auto-sync of Instantly campaigns + leads on or off. The mirror tables still serve stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume Instantly syncing.
+Returns: { enabled, result_summary }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set Instantly sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => asText(await setSyncEnabledTool(args)),
   )
 }

@@ -59,6 +59,16 @@ function renameLegacyTablesIfNeeded(db: Database.Database): void {
 }
 
 function ensureSchema(db: Database.Database): void {
+  // gmail_drafts / gmail_jobs = existing draft outbox state.
+  //
+  // gmail_threads is a local mirror of the user's Gmail threads from
+  // the last 30 days, refreshed every 15 minutes. The agent answers
+  // "who emailed me about X / what's the latest from acme" against
+  // the mirror without round-tripping every chat turn.
+  //
+  // Schema: history_id is Gmail's per-thread version. A list response
+  // gives us (id, historyId) cheaply; we only fetch full thread
+  // metadata when historyId differs from the row we've cached.
   db.exec(`
     CREATE TABLE IF NOT EXISTS gmail_drafts (
       id TEXT PRIMARY KEY,
@@ -86,6 +96,45 @@ function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS gmail_threads (
+      thread_id        TEXT PRIMARY KEY,
+      history_id       TEXT,
+      subject          TEXT,
+      last_from        TEXT,
+      last_to          TEXT,
+      last_snippet     TEXT,
+      message_count    INTEGER,
+      last_message_at  TEXT,
+      label_ids        TEXT,
+      synced_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS gmail_sync_runs (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at        TEXT NOT NULL,
+      finished_at       TEXT,
+      kind              TEXT NOT NULL DEFAULT 'incremental',
+      threads_seen      INTEGER NOT NULL DEFAULT 0,
+      threads_inserted  INTEGER NOT NULL DEFAULT 0,
+      threads_updated   INTEGER NOT NULL DEFAULT 0,
+      threads_fetched   INTEGER NOT NULL DEFAULT 0,
+      errors_json       TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS gmail_api_usage (
+      date               TEXT PRIMARY KEY,
+      calls_succeeded    INTEGER NOT NULL DEFAULT 0,
+      calls_failed       INTEGER NOT NULL DEFAULT 0,
+      calls_rate_limited INTEGER NOT NULL DEFAULT 0,
+      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS gmail_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   const ensureColumn = (column: string, type: string) => {
@@ -103,6 +152,9 @@ function ensureSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_gmail_drafts_status ON gmail_drafts(status);
     CREATE INDEX IF NOT EXISTS idx_gmail_drafts_output_id ON gmail_drafts(output_id);
     CREATE INDEX IF NOT EXISTS idx_gmail_jobs_status_run_at ON gmail_jobs(status, run_at);
+    CREATE INDEX IF NOT EXISTS idx_gmail_threads_last_at ON gmail_threads(last_message_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_gmail_threads_subject ON gmail_threads(subject);
+    CREATE INDEX IF NOT EXISTS idx_gmail_sync_runs_started ON gmail_sync_runs(started_at DESC);
   `)
 }
 

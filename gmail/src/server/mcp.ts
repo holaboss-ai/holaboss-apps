@@ -11,6 +11,7 @@ import { getDb } from "./db"
 import { listThreads, getThread, parseMessage } from "./google-api"
 import { enqueueSend } from "./queue"
 import { resolveHolabossTurnContext } from "./holaboss-bridge"
+import { isSyncEnabled, setSyncEnabled, syncThreads } from "./sync"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 type ErrorCode =
@@ -536,6 +537,88 @@ Returns: array of DraftRecord. Empty array if none match.`,
       } catch (e) {
         return upstreamErr(e)
       }
+    },
+  )
+
+  const SyncThreadsShape = {
+    run_id: z.number(),
+    threads_seen: z.number(),
+    threads_inserted: z.number(),
+    threads_updated: z.number(),
+    threads_fetched: z.number(),
+    errors_count: z.number(),
+    rate_limited: z.boolean(),
+  }
+  server.registerTool(
+    "gmail_sync_threads",
+    {
+      title: "Sync Gmail threads",
+      description: `Pull recent Gmail threads (last 30 days by default) into the local mirror table gmail_threads. Runs automatically every 15 minutes; use this tool to force an immediate refresh.
+
+When to use: the user asks "sync gmail now", or after sending a reply via gmail_reply_to_thread and you want the mirror to reflect the new message before answering "what's the latest from acme?".
+Listing-only walk: existing threads with unchanged historyId are touched (synced_at refreshed) without a metadata fetch. New / changed threads pull headers + last snippet (capped at 200 detail fetches per run).
+Returns: { run_id, threads_seen, threads_inserted, threads_updated, threads_fetched, errors_count, rate_limited }.`,
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("If true, re-fetch metadata for every thread regardless of historyId. Default false."),
+        query: z
+          .string()
+          .optional()
+          .describe("Override the search query. Default 'newer_than:30d'. Examples: 'is:starred', 'from:boss@x.com newer_than:7d'."),
+      },
+      outputSchema: SyncThreadsShape,
+      annotations: {
+        title: "Sync Gmail threads",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ full, query }) => {
+      try {
+        const r = await syncThreads({ full, query })
+        return success({
+          run_id: r.run_id,
+          threads_seen: r.threads_seen,
+          threads_inserted: r.threads_inserted,
+          threads_updated: r.threads_updated,
+          threads_fetched: r.threads_fetched,
+          errors_count: r.errors.length,
+          rate_limited: r.rate_limited,
+        })
+      } catch (e) {
+        return upstreamErr(e)
+      }
+    },
+  )
+
+  const SetSyncEnabledShape = { enabled: z.boolean() }
+  server.registerTool(
+    "gmail_set_sync_enabled",
+    {
+      title: "Enable or disable Gmail sync",
+      description: `Turn the 15-minute auto-sync of Gmail threads on or off. The mirror table still serves stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume Gmail syncing.
+Returns: { enabled }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set Gmail sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ enabled }) => {
+      setSyncEnabled(enabled)
+      return success({ enabled: isSyncEnabled() })
     },
   )
 
