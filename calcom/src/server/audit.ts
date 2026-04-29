@@ -44,7 +44,7 @@ function recordAction<A, T>(
     error_message: result.ok ? null : result.error.message,
   }
   db.prepare(`
-    INSERT INTO agent_actions (
+    INSERT INTO calcom_agent_actions (
       id, timestamp, tool_name, args_json, outcome, duration_ms,
       calcom_object, calcom_record_id, calcom_deep_link, result_summary,
       error_code, error_message
@@ -61,15 +61,15 @@ export function listRecentActions(params: { since?: number; limit?: number }): A
   const limit = params.limit ?? 100
   if (params.since) {
     return db
-      .prepare(`SELECT * FROM agent_actions WHERE timestamp > @since ORDER BY timestamp DESC LIMIT @limit`)
+      .prepare(`SELECT * FROM calcom_agent_actions WHERE timestamp > @since ORDER BY timestamp DESC LIMIT @limit`)
       .all({ since: params.since, limit }) as AgentActionRecord[]
   }
   return db
-    .prepare(`SELECT * FROM agent_actions ORDER BY timestamp DESC LIMIT @limit`)
+    .prepare(`SELECT * FROM calcom_agent_actions ORDER BY timestamp DESC LIMIT @limit`)
     .all({ limit }) as AgentActionRecord[]
 }
 
 export function clearActions(): number {
   const db = getDb()
-  return db.prepare("DELETE FROM agent_actions").run().changes
+  return db.prepare("DELETE FROM calcom_agent_actions").run().changes
 }

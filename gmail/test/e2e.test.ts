@@ -62,10 +62,10 @@ describe("Gmail Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO gmail_drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
       ).run(draftId, "alice@test.com", "Hello Alice", "Hi there!", now)
 
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draftId) as DraftRecord
+      const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draftId) as DraftRecord
       expect(draft.status).toBe("pending")
       expect(draft.to_email).toBe("alice@test.com")
       expect(draft.body).toBe("Hi there!")
@@ -76,9 +76,9 @@ describe("Gmail Module E2E", () => {
       const db = getDb()
       const now = new Date().toISOString()
 
-      db.prepare("UPDATE drafts SET status = 'sent', sent_at = ? WHERE id = ?").run(now, draftId)
+      db.prepare("UPDATE gmail_drafts SET status = 'sent', sent_at = ? WHERE id = ?").run(now, draftId)
 
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draftId) as DraftRecord
+      const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draftId) as DraftRecord
       expect(draft.status).toBe("sent")
       expect(draft.sent_at).toBeDefined()
     })
@@ -90,11 +90,11 @@ describe("Gmail Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO gmail_drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
       ).run(id, "bob@test.com", "Test", "Body", now)
 
-      db.prepare("UPDATE drafts SET status = 'discarded' WHERE id = ?").run(id)
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      db.prepare("UPDATE gmail_drafts SET status = 'discarded' WHERE id = ?").run(id)
+      const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(id) as DraftRecord
       expect(draft.status).toBe("discarded")
     })
 
@@ -105,11 +105,11 @@ describe("Gmail Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO gmail_drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
       ).run(id, "carol@test.com", "Pending", "Still pending", now)
 
       const pending = db
-        .prepare("SELECT * FROM drafts WHERE status = 'pending'")
+        .prepare("SELECT * FROM gmail_drafts WHERE status = 'pending'")
         .all() as DraftRecord[]
       expect(pending.length).toBeGreaterThanOrEqual(1)
       for (const d of pending) {
@@ -129,10 +129,10 @@ describe("Gmail Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO gmail_drafts (id, to_email, gmail_thread_id, subject, body, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)"
       ).run(id, "alice@test.com", "thread-abc-123", "Re: Hello", "Thanks!", now)
 
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(id) as DraftRecord
       expect(draft.gmail_thread_id).toBe("thread-abc-123")
     })
 
@@ -143,10 +143,10 @@ describe("Gmail Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
+        "INSERT INTO gmail_drafts (id, to_email, subject, body, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)"
       ).run(id, "new@test.com", "First contact", "Hi!", now)
 
-      const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+      const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(id) as DraftRecord
       expect(draft.gmail_thread_id).toBeNull()
     })
   })

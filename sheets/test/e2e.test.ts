@@ -43,8 +43,8 @@ describe("Sheets Module E2E", () => {
       const db = getDb()
       const now = new Date().toISOString()
 
-      db.prepare("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_sync_at', ?)").run(now)
-      const row = db.prepare("SELECT value FROM sync_state WHERE key = 'last_sync_at'").get() as { value: string }
+      db.prepare("INSERT OR REPLACE INTO sheets_sync_state (key, value) VALUES ('last_sync_at', ?)").run(now)
+      const row = db.prepare("SELECT value FROM sheets_sync_state WHERE key = 'last_sync_at'").get() as { value: string }
       expect(row.value).toBe(now)
     })
 
@@ -52,10 +52,10 @@ describe("Sheets Module E2E", () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      db.prepare("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('sheet_id', 'abc')").run()
-      db.prepare("INSERT OR REPLACE INTO sync_state (key, value) VALUES ('sheet_id', 'def')").run()
+      db.prepare("INSERT OR REPLACE INTO sheets_sync_state (key, value) VALUES ('sheet_id', 'abc')").run()
+      db.prepare("INSERT OR REPLACE INTO sheets_sync_state (key, value) VALUES ('sheet_id', 'def')").run()
 
-      const row = db.prepare("SELECT value FROM sync_state WHERE key = 'sheet_id'").get() as { value: string }
+      const row = db.prepare("SELECT value FROM sheets_sync_state WHERE key = 'sheet_id'").get() as { value: string }
       expect(row.value).toBe("def")
     })
   })
