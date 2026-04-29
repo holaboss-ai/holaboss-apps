@@ -1,0 +1,89 @@
+title: Twitter Metrics
+description: Engagement across published posts, refreshed every 5 minutes by the in-process scheduler.
+
+panels:
+  - type: kpi
+    title: Total Impressions
+    query: |
+      SELECT COALESCE(SUM(latest), 0) AS value FROM (
+        SELECT MAX(impressions) AS latest
+        FROM twitter_post_metrics
+        GROUP BY post_id
+      )
+
+  - type: kpi
+    title: Total Likes
+    query: |
+      SELECT COALESCE(SUM(latest), 0) AS value FROM (
+        SELECT MAX(likes) AS latest
+        FROM twitter_post_metrics
+        GROUP BY post_id
+      )
+
+  - type: kpi
+    title: Posts tracked
+    query: |
+      SELECT COUNT(DISTINCT post_id) AS value FROM twitter_post_metrics
+
+  - type: kpi
+    title: API calls today
+    query: |
+      SELECT COALESCE(calls_succeeded, 0) AS value
+      FROM twitter_api_usage
+      WHERE date = date('now')
+
+  - type: data_view
+    title: Top posts (last 7 days)
+    query: |
+      SELECT
+        substr(p.content, 1, 100) AS content,
+        p.status                 AS status,
+        COALESCE(m.impressions, 0) AS impressions,
+        COALESCE(m.likes, 0)       AS likes,
+        COALESCE(m.comments, 0)    AS comments,
+        COALESCE(m.shares, 0)      AS shares
+      FROM twitter_posts p
+      LEFT JOIN (
+        SELECT
+          post_id,
+          MAX(impressions) AS impressions,
+          MAX(likes)       AS likes,
+          MAX(comments)    AS comments,
+          MAX(shares)      AS shares
+        FROM twitter_post_metrics
+        GROUP BY post_id
+      ) m ON m.post_id = p.id
+      WHERE p.status = 'published'
+        AND p.deleted_at IS NULL
+        AND p.published_at >= datetime('now', '-7 days')
+      ORDER BY impressions DESC
+      LIMIT 25
+    views:
+      - type: table
+        columns: [content, status, impressions, likes, comments, shares]
+      - type: board
+        group_by: status
+        card_title: content
+        card_subtitle: impressions
+    default_view: table
+
+  - type: data_view
+    title: Recent scheduler runs
+    query: |
+      SELECT
+        started_at,
+        kind,
+        posts_considered,
+        posts_refreshed,
+        posts_skipped,
+        posts_deleted,
+        CASE
+          WHEN errors_json IS NULL THEN ''
+          ELSE substr(errors_json, 1, 80)
+        END AS errors
+      FROM twitter_metrics_runs
+      ORDER BY started_at DESC
+      LIMIT 25
+    views:
+      - type: table
+        columns: [started_at, kind, posts_considered, posts_refreshed, posts_skipped, posts_deleted, errors]
