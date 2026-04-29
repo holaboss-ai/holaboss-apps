@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 import { apiGet, apiPost } from "./apollo-client"
 import { wrapTool } from "./audit"
+import { isSyncEnabled, setSyncEnabled, syncOutreach } from "./sync"
 import type {
   ApolloError,
   EmailEvent,
@@ -755,6 +756,68 @@ const EmailsListShape = {
   ...ToolSuccessMetaShape,
 }
 
+// -------------------- Sync (local mirror) --------------------
+
+export interface SyncOutreachInput { full?: boolean }
+export async function syncOutreachImpl(
+  input: SyncOutreachInput,
+): Promise<
+  Result<
+    {
+      total_inserted: number
+      total_updated: number
+      rate_limited: boolean
+      per_object: Array<{
+        object_slug: string
+        records_seen: number
+        records_inserted: number
+        records_updated: number
+        errors_count: number
+      }>
+    } & ToolSuccessMeta,
+    ApolloError
+  >
+> {
+  try {
+    const r = await syncOutreach({ full: input.full })
+    return {
+      ok: true,
+      data: {
+        total_inserted: r.total_inserted,
+        total_updated: r.total_updated,
+        rate_limited: r.rate_limited,
+        per_object: r.per_object.map((p) => ({
+          object_slug: p.object_slug,
+          records_seen: p.records_seen,
+          records_inserted: p.records_inserted,
+          records_updated: p.records_updated,
+          errors_count: p.errors.length,
+        })),
+        result_summary: `Synced ${r.total_inserted + r.total_updated} record(s) across ${r.per_object.length} object(s)`,
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+    }
+  }
+}
+
+export interface SetSyncEnabledInput { enabled: boolean }
+export async function setSyncEnabledImpl(
+  input: SetSyncEnabledInput,
+): Promise<Result<{ enabled: boolean } & ToolSuccessMeta, ApolloError>> {
+  setSyncEnabled(input.enabled)
+  return {
+    ok: true,
+    data: {
+      enabled: isSyncEnabled(),
+      result_summary: input.enabled ? "Apollo sync enabled" : "Apollo sync disabled",
+    },
+  }
+}
+
 export function registerTools(server: McpServer): void {
   const getConnectionStatus = wrapTool("apollo_get_connection_status", getConnectionStatusImpl)
   const searchPeople = wrapTool("apollo_search_people", searchPeopleImpl)
@@ -766,6 +829,8 @@ export function registerTools(server: McpServer): void {
   const addToSequence = wrapTool("apollo_add_to_sequence", addToSequenceImpl)
   const removeFromSequence = wrapTool("apollo_remove_from_sequence", removeFromSequenceImpl)
   const listEmailsSent = wrapTool("apollo_list_emails_sent", listEmailsSentImpl)
+  const syncOutreachTool = wrapTool("apollo_sync_outreach", syncOutreachImpl)
+  const setSyncEnabledTool = wrapTool("apollo_set_sync_enabled", setSyncEnabledImpl)
 
   server.registerTool(
     "apollo_get_connection_status",
@@ -1207,5 +1272,72 @@ Errors: { code: 'validation_failed' } if neither contact_id nor sequence_id is p
       },
     },
     async (args) => asText(await listEmailsSent(args)),
+  )
+
+  const SyncObjectShape = z.object({
+    object_slug: z.string(),
+    records_seen: z.number(),
+    records_inserted: z.number(),
+    records_updated: z.number(),
+    errors_count: z.number(),
+  })
+  const SyncOutreachShape = {
+    total_inserted: z.number(),
+    total_updated: z.number(),
+    rate_limited: z.boolean(),
+    per_object: z.array(SyncObjectShape),
+    ...ToolSuccessMetaShape,
+  }
+  const SetSyncEnabledShape = { enabled: z.boolean(), ...ToolSuccessMetaShape }
+
+  server.registerTool(
+    "apollo_sync_outreach",
+    {
+      title: "Sync Apollo outreach",
+      description: `Pull Apollo emailer campaigns + the contacts on them into local mirror tables (apollo_campaigns, apollo_contacts). Runs automatically every 30 minutes; full reconciliation runs daily. Use this tool to force an immediate refresh.
+
+When to use: the user asks "sync my Apollo now", or after adding contacts to a sequence and you want the mirror to reflect the change before answering "did anyone reply?" / "what's the status of campaign X?".
+Default mode (full=false): incremental — pulls contacts modified since the last sync (sorted by activity date desc).
+Full mode (full=true): paginates everything (capped at 5000 per object). Detects deletions.
+Returns: { total_inserted, total_updated, rate_limited, per_object: [{ object_slug, records_seen, records_inserted, records_updated, errors_count }] }.`,
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("If true, paginate everything. Default false = incremental since last sync."),
+      },
+      outputSchema: SyncOutreachShape,
+      annotations: {
+        title: "Sync Apollo outreach",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => asText(await syncOutreachTool(args)),
+  )
+
+  server.registerTool(
+    "apollo_set_sync_enabled",
+    {
+      title: "Enable or disable Apollo sync",
+      description: `Turn the 30-minute auto-sync of Apollo campaigns + contacts on or off. The mirror tables still serve stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume Apollo syncing.
+Returns: { enabled, result_summary }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set Apollo sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => asText(await setSyncEnabledTool(args)),
   )
 }

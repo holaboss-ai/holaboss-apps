@@ -29,6 +29,8 @@ mcp:
     - "instantly_remove_lead_from_campaign"
     - "instantly_get_campaign_stats"
     - "instantly_send_test_email"
+    - "instantly_sync_outreach"
+    - "instantly_set_sync_enabled"
 
 integration:
   destination: "instantly"

@@ -28,6 +28,8 @@ mcp:
     - "apollo_add_to_sequence"
     - "apollo_remove_from_sequence"
     - "apollo_list_emails_sent"
+    - "apollo_sync_outreach"
+    - "apollo_set_sync_enabled"
 
 integration:
   destination: "apollo"
