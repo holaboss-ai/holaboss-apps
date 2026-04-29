@@ -124,8 +124,8 @@ const TOOLKIT_HINTS: Record<string, string> = {
     `HubSpot's managed auth should usually work. If your account requires a custom OAuth app, ` +
     `re-run with --oauth-client-id <id> --oauth-client-secret <secret>.`,
   attio: `Attio uses an API key. Re-run with --api-key <your-attio-key>.`,
-  calcom:
-    `Cal.com supports both OAuth2 and API key. Composio doesn't ship a managed Cal.com OAuth app, ` +
+  cal:
+    `Cal.com (toolkit slug "cal") supports both OAuth2 and API key. Composio doesn't ship a managed Cal.com OAuth app, ` +
     `so pick one:\n` +
     `  • OAuth2 (recommended): create an OAuth client at https://app.cal.com → Settings → Developer → ` +
     `OAuth, then re-run with --oauth-client-id <id> --oauth-client-secret <secret> --auth-scheme OAUTH2.\n` +
