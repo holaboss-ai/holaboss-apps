@@ -16,7 +16,10 @@ export interface BridgeLike {
 let _client: BridgeLike | null = null
 
 function defaultClient(): BridgeLike {
-  return createIntegrationClient("cal") as BridgeLike
+  // Composio toolkit slug is "calcom" — must match what the desktop's
+  // integrations pane writes into integration_bindings.integration_key.
+  // Using "cal" here was the cause of `integration_not_bound` errors.
+  return createIntegrationClient("calcom") as BridgeLike
 }
 
 export function getBridgeClient(): BridgeLike {
