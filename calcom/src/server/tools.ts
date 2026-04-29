@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 
 import { apiGet, apiPost } from "./calcom-client"
 import { wrapTool } from "./audit"
+import { isSyncEnabled, setSyncEnabled, syncBookings } from "./sync"
 import type {
   AvailabilitySlot,
   BookingAttendee,
@@ -254,6 +255,66 @@ export async function listAvailableSlotsImpl(
   }
 }
 
+// -------------------- Sync (local mirror) --------------------
+
+export interface SyncBookingsInput {
+  full?: boolean
+  force?: boolean
+}
+export async function syncBookingsImpl(
+  input: SyncBookingsInput,
+): Promise<
+  Result<
+    {
+      run_id: number
+      bookings_seen: number
+      bookings_inserted: number
+      bookings_updated: number
+      errors_count: number
+      rate_limited: boolean
+    } & ToolSuccessMeta,
+    CalcomError
+  >
+> {
+  try {
+    const r = await syncBookings({ full: input.full, force: input.force })
+    return {
+      ok: true,
+      data: {
+        run_id: r.run_id,
+        bookings_seen: r.bookings_seen,
+        bookings_inserted: r.bookings_inserted,
+        bookings_updated: r.bookings_updated,
+        errors_count: r.errors.length,
+        rate_limited: r.rate_limited,
+        result_summary: `Synced ${r.bookings_seen} booking(s): ${r.bookings_inserted} inserted, ${r.bookings_updated} updated, ${r.errors.length} error(s)`,
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        code: "internal",
+        message: err instanceof Error ? err.message : String(err),
+      },
+    }
+  }
+}
+
+export interface SetSyncEnabledInput { enabled: boolean }
+export async function setSyncEnabledImpl(
+  input: SetSyncEnabledInput,
+): Promise<Result<{ enabled: boolean } & ToolSuccessMeta, CalcomError>> {
+  setSyncEnabled(input.enabled)
+  return {
+    ok: true,
+    data: {
+      enabled: isSyncEnabled(),
+      result_summary: input.enabled ? "Cal.com sync enabled" : "Cal.com sync disabled",
+    },
+  }
+}
+
 // -------------------- Registration --------------------
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 
@@ -266,6 +327,8 @@ export function registerTools(server: McpServer): void {
   const cancelBooking = wrapTool("calcom_cancel_booking", cancelBookingImpl)
   const rescheduleBooking = wrapTool("calcom_reschedule_booking", rescheduleBookingImpl)
   const listAvailableSlots = wrapTool("calcom_list_available_slots", listAvailableSlotsImpl)
+  const syncBookingsTool = wrapTool("calcom_sync_bookings", syncBookingsImpl)
+  const setSyncEnabledTool = wrapTool("calcom_set_sync_enabled", setSyncEnabledImpl)
 
   const asText = (result: Result<unknown, CalcomError>) => {
     if (result.ok) {
@@ -326,6 +389,16 @@ export function registerTools(server: McpServer): void {
     slots: z.array(z.object({ start: z.string(), end: z.string() })),
     ...ToolSuccessMetaShape,
   }
+  const SyncBookingsShape = {
+    run_id: z.number(),
+    bookings_seen: z.number(),
+    bookings_inserted: z.number(),
+    bookings_updated: z.number(),
+    errors_count: z.number(),
+    rate_limited: z.boolean(),
+    ...ToolSuccessMetaShape,
+  }
+  const SetSyncEnabledShape = { enabled: z.boolean(), ...ToolSuccessMetaShape }
 
   server.registerTool(
     "calcom_get_connection_status",
@@ -543,5 +616,60 @@ Returns: { slots: [{ start, end }] } in ISO 8601. Empty array means no availabil
       },
     },
     async (args) => asText(await listAvailableSlots(args)),
+  )
+
+  server.registerTool(
+    "calcom_sync_bookings",
+    {
+      title: "Sync Cal.com bookings",
+      description: `Pull bookings from Cal.com into the local mirror table calcom_bookings. Runs automatically every 15 minutes; use this tool to force an immediate refresh.
+
+When to use: the user asks "sync my calendar now", or you've just rescheduled / cancelled a booking and want the mirror table to reflect it before answering further questions.
+Default mode (full=false): pulls bookings whose start time is within the last 30 days plus all upcoming. This is the same window the agent reasons about.
+Full mode (full=true): paginates everything (capped at 5000 rows). Use sparingly — Cal.com rate limits apply.
+Returns: { run_id, bookings_seen, bookings_inserted, bookings_updated, errors_count, rate_limited, result_summary }.`,
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("If true, paginate all bookings (capped at 5000). Default false = last 30 days + upcoming."),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Reserved for future use; currently no-op (sync always upserts)."),
+      },
+      outputSchema: SyncBookingsShape,
+      annotations: {
+        title: "Sync Cal.com bookings",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => asText(await syncBookingsTool(args)),
+  )
+
+  server.registerTool(
+    "calcom_set_sync_enabled",
+    {
+      title: "Enable or disable Cal.com sync",
+      description: `Turn the 15-minute auto-sync of Cal.com bookings on or off. The mirror table calcom_bookings still serves stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume calendar syncing.
+Returns: { enabled, result_summary }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set Cal.com sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => asText(await setSyncEnabledTool(args)),
   )
 }

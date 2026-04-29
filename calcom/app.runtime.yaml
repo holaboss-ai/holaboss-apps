@@ -26,6 +26,8 @@ mcp:
     - calcom_cancel_booking
     - calcom_reschedule_booking
     - calcom_list_available_slots
+    - calcom_sync_bookings
+    - calcom_set_sync_enabled
 
 integration:
   destination: "calcom"
