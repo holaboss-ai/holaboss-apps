@@ -1,0 +1,98 @@
+title: Reddit Monitoring — External Summary
+description: Final 48h values for tracked Reddit posts that survived the monitoring window. Posts missing a Views value still need manual entry.
+
+panels:
+  - type: kpi
+    title: Posts in summary
+    query: |
+      SELECT COUNT(*) AS value
+      FROM reddit_posts
+      WHERE monitoring_completed_at IS NOT NULL
+        AND deleted_at IS NULL
+
+  - type: kpi
+    title: Awaiting Views entry
+    query: |
+      SELECT COUNT(*) AS value
+      FROM reddit_posts
+      WHERE monitoring_completed_at IS NOT NULL
+        AND deleted_at IS NULL
+        AND views IS NULL
+
+  - type: kpi
+    title: Total final upvotes
+    query: |
+      SELECT COALESCE(SUM(final_score), 0) AS value
+      FROM reddit_posts
+      WHERE monitoring_completed_at IS NOT NULL
+        AND deleted_at IS NULL
+
+  - type: kpi
+    title: Total final comments
+    query: |
+      SELECT COALESCE(SUM(final_num_comments), 0) AS value
+      FROM reddit_posts
+      WHERE monitoring_completed_at IS NOT NULL
+        AND deleted_at IS NULL
+
+  - type: data_view
+    title: Awaiting Views input
+    query: |
+      SELECT
+        substr(p.subreddit, 1, 30)         AS subreddit,
+        substr(p.title, 1, 80)             AS title,
+        p.final_score                      AS final_upvotes,
+        p.final_num_comments               AS final_comments,
+        p.final_upvote_ratio               AS upvote_ratio,
+        p.monitoring_completed_at          AS completed_at,
+        p.source_url                       AS url
+      FROM reddit_posts p
+      WHERE p.monitoring_completed_at IS NOT NULL
+        AND p.deleted_at IS NULL
+        AND p.views IS NULL
+      ORDER BY p.monitoring_completed_at DESC
+    views:
+      - type: table
+        columns: [subreddit, title, final_upvotes, final_comments, upvote_ratio, completed_at, url]
+
+  - type: data_view
+    title: External summary (complete entries)
+    query: |
+      SELECT
+        substr(p.subreddit, 1, 30)         AS subreddit,
+        substr(p.title, 1, 80)             AS title,
+        p.final_score                      AS upvotes,
+        p.final_num_comments               AS comments,
+        p.final_upvote_ratio               AS upvote_ratio,
+        p.views                            AS views,
+        p.monitoring_completed_at          AS completed_at,
+        p.source_url                       AS url
+      FROM reddit_posts p
+      WHERE p.monitoring_completed_at IS NOT NULL
+        AND p.deleted_at IS NULL
+        AND p.views IS NOT NULL
+      ORDER BY p.monitoring_completed_at DESC
+    views:
+      - type: table
+        columns: [subreddit, title, upvotes, comments, upvote_ratio, views, completed_at, url]
+
+  - type: data_view
+    title: Removed during window
+    query: |
+      SELECT
+        substr(p.subreddit, 1, 30)        AS subreddit,
+        substr(p.title, 1, 80)            AS title,
+        p.deleted_reason                  AS reason,
+        p.deleted_at                      AS removed_at,
+        p.source_url                      AS url
+      FROM reddit_posts p
+      WHERE p.deleted_at IS NOT NULL
+        AND p.source_url IS NOT NULL
+      ORDER BY p.deleted_at DESC
+    views:
+      - type: table
+        columns: [subreddit, title, reason, removed_at, url]
+      - type: board
+        group_by: reason
+        card_title: title
+        card_subtitle: subreddit

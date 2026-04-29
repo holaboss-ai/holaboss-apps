@@ -11,7 +11,7 @@ export const fetchPosts = createServerFn({ method: "GET" }).handler(
   async () => {
     const db = getDb()
     return db
-      .prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT 50")
+      .prepare("SELECT * FROM reddit_posts ORDER BY created_at DESC LIMIT 50")
       .all() as PostRecord[]
   },
 )
@@ -21,7 +21,7 @@ export const fetchPost = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const db = getDb()
     const post = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(data.post_id) as PostRecord | undefined
     if (!post) throw new Error("Post not found")
     return post
@@ -37,11 +37,11 @@ export const createPost = createServerFn({ method: "POST" })
     const now = new Date().toISOString()
 
     db.prepare(
-      "INSERT INTO posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
+      "INSERT INTO reddit_posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
     ).run(id, data.title, data.content, data.subreddit, data.scheduled_at ?? null, now, now)
 
     const post = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(id) as PostRecord
     return syncPostOutputAndPersist(db, post, null)
   })
@@ -59,10 +59,10 @@ export const updatePost = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = getDb()
     db.prepare(
-      "UPDATE posts SET title = ?, content = ?, subreddit = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
+      "UPDATE reddit_posts SET title = ?, content = ?, subreddit = ?, scheduled_at = ?, status = 'draft', error_message = NULL, updated_at = datetime('now') WHERE id = ? AND status IN ('draft', 'failed')",
     ).run(data.title, data.content, data.subreddit, data.scheduled_at ?? null, data.post_id)
     const post = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(data.post_id) as PostRecord
     return syncPostOutputAndPersist(db, post, null)
   })
@@ -72,7 +72,7 @@ export const publishPost = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = getDb()
     const post = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(data.post_id) as PostRecord | undefined
 
     if (!post) throw new Error("Post not found")
@@ -93,11 +93,11 @@ export const publishPost = createServerFn({ method: "POST" })
     const newStatus = isScheduled ? "scheduled" : "queued"
 
     db.prepare(
-      "UPDATE posts SET status = ?, updated_at = datetime('now') WHERE id = ?",
+      "UPDATE reddit_posts SET status = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(newStatus, post.id)
 
     const updated = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(post.id) as PostRecord
     await syncPostOutputAndPersist(db, updated, null)
 
@@ -109,13 +109,13 @@ export const cancelSchedule = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = getDb()
     db.prepare(
-      "UPDATE jobs SET status = 'failed', error_message = 'Cancelled by user', updated_at = datetime('now') WHERE json_extract(payload, '$.post_id') = ? AND status IN ('waiting', 'delayed')",
+      "UPDATE reddit_jobs SET status = 'failed', error_message = 'Cancelled by user', updated_at = datetime('now') WHERE json_extract(payload, '$.post_id') = ? AND status IN ('waiting', 'delayed')",
     ).run(data.post_id)
     db.prepare(
-      "UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?",
+      "UPDATE reddit_posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?",
     ).run(data.post_id)
     const post = db
-      .prepare("SELECT * FROM posts WHERE id = ?")
+      .prepare("SELECT * FROM reddit_posts WHERE id = ?")
       .get(data.post_id) as PostRecord
     return syncPostOutputAndPersist(db, post, null)
   })
@@ -125,9 +125,9 @@ export const deletePost = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const db = getDb()
     const post = db
-      .prepare("SELECT output_id FROM posts WHERE id = ?")
+      .prepare("SELECT output_id FROM reddit_posts WHERE id = ?")
       .get(data.post_id) as Pick<PostRecord, "output_id"> | undefined
-    db.prepare("DELETE FROM posts WHERE id = ?").run(data.post_id)
+    db.prepare("DELETE FROM reddit_posts WHERE id = ?").run(data.post_id)
     if (post?.output_id) {
       try {
         await updateAppOutput(post.output_id, { status: "deleted" })
