@@ -136,6 +136,16 @@ describe("twitter db migration", () => {
     ).map((t) => t.name)
     expect(names).toContain("twitter_posts")
     expect(names).toContain("twitter_jobs")
+    expect(names).toContain("twitter_post_metrics")
+    expect(names).toContain("twitter_post_metrics_daily")
+    expect(names).toContain("twitter_metrics_runs")
+    expect(names).toContain("twitter_api_usage")
+
+    // twitter_posts gets the deleted_at column on fresh init.
+    const postCols = (
+      db.prepare("PRAGMA table_info(twitter_posts)").all() as Array<{ name: string }>
+    ).map((c) => c.name)
+    expect(postCols).toContain("deleted_at")
 
     // Indexes recreated against the new names.
     const indexes = (
@@ -145,6 +155,47 @@ describe("twitter db migration", () => {
     ).map((i) => i.name)
     expect(indexes).toContain("idx_twitter_posts_status")
     expect(indexes).toContain("idx_twitter_jobs_status_run_at")
+    expect(indexes).toContain("idx_twitter_post_metrics_captured")
+    expect(indexes).toContain("idx_twitter_metrics_runs_started")
+    db.close()
+  })
+
+  it("backfills deleted_at column on a pre-existing twitter_posts table", async () => {
+    const sharedPath = join(scratchDir, ".holaboss", "data.db")
+    process.env.WORKSPACE_DB_PATH = sharedPath
+    // Seed a "pre-deleted_at" twitter_posts table inline so we exercise
+    // the ALTER-on-second-init path explicitly. Mirrors what the
+    // post-rename migration would have produced before this commit.
+    mkdirSync(join(scratchDir, ".holaboss"), { recursive: true })
+    {
+      const seed = new Database(sharedPath)
+      seed.exec(`
+        CREATE TABLE twitter_posts (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft',
+          output_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `)
+      seed.prepare(
+        "INSERT INTO twitter_posts (id, content, status, created_at, updated_at) VALUES (?, ?, 'published', ?, ?)",
+      ).run("p1", "x", "2026-04-01T00:00:00Z", "2026-04-01T00:00:00Z")
+      seed.close()
+    }
+
+    const { getDb } = await import("../src/server/db")
+    const db = getDb()
+    const cols = (
+      db.prepare("PRAGMA table_info(twitter_posts)").all() as Array<{ name: string }>
+    ).map((c) => c.name)
+    expect(cols).toContain("deleted_at")
+    const row = db.prepare("SELECT id, deleted_at FROM twitter_posts WHERE id = 'p1'").get() as {
+      id: string
+      deleted_at: string | null
+    }
+    expect(row.deleted_at).toBeNull()
     db.close()
   })
 })

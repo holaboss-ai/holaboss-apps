@@ -82,6 +82,11 @@ function renameLegacyTablesIfNeeded(db: Database.Database): void {
 function ensureSchema(db: Database.Database): void {
   // Step 1 — tables. Tables only; indexes deferred so they can reference
   // newly-added columns from the ALTER step below.
+  //
+  // Metrics tables (post_metrics / post_metrics_daily / metrics_runs /
+  // api_usage) follow the cross-platform convention documented in
+  // holaOS/docs/plans/2026-04-28-post-metrics-convention.md. LinkedIn /
+  // Reddit will create the same shape under their own prefix.
   db.exec(`
     CREATE TABLE IF NOT EXISTS twitter_posts (
       id TEXT PRIMARY KEY,
@@ -108,20 +113,85 @@ function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS twitter_post_metrics (
+      post_id     TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      impressions INTEGER,
+      likes       INTEGER,
+      comments    INTEGER,
+      shares      INTEGER,
+      bookmarks   INTEGER,
+      raw         TEXT,
+      PRIMARY KEY (post_id, captured_at)
+    );
+
+    CREATE TABLE IF NOT EXISTS twitter_post_metrics_daily (
+      post_id     TEXT NOT NULL,
+      day         TEXT NOT NULL,
+      impressions INTEGER,
+      likes       INTEGER,
+      comments    INTEGER,
+      shares      INTEGER,
+      bookmarks   INTEGER,
+      PRIMARY KEY (post_id, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS twitter_metrics_runs (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at       TEXT NOT NULL,
+      finished_at      TEXT,
+      kind             TEXT NOT NULL DEFAULT 'refresh',
+      posts_considered INTEGER NOT NULL DEFAULT 0,
+      posts_refreshed  INTEGER NOT NULL DEFAULT 0,
+      posts_skipped    INTEGER NOT NULL DEFAULT 0,
+      posts_deleted    INTEGER NOT NULL DEFAULT 0,
+      errors_json      TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS twitter_api_usage (
+      date               TEXT PRIMARY KEY,
+      calls_succeeded    INTEGER NOT NULL DEFAULT 0,
+      calls_failed       INTEGER NOT NULL DEFAULT 0,
+      calls_rate_limited INTEGER NOT NULL DEFAULT 0,
+      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   // Step 2 — columns. Backfill columns that pre-rename / cross-file
   // migrations may have skipped. Each ALTER is gated by a PRAGMA check.
-  if (!hasColumn(db, "twitter_posts", "output_id")) {
-    db.exec("ALTER TABLE twitter_posts ADD COLUMN output_id TEXT")
+  // The shape mirrors the canonical CREATE TABLE above so the column
+  // set is consistent regardless of how the table was first created
+  // (fresh, in-place rename from `posts`, or cross-file ATTACH copy).
+  const ensureColumn = (column: string, type: string) => {
+    if (!hasColumn(db, "twitter_posts", column)) {
+      db.exec(`ALTER TABLE twitter_posts ADD COLUMN ${column} ${type}`)
+    }
   }
+  ensureColumn("output_id", "TEXT")
+  ensureColumn("external_post_id", "TEXT")
+  ensureColumn("scheduled_at", "TEXT")
+  ensureColumn("published_at", "TEXT")
+  ensureColumn("error_message", "TEXT")
+  // Set when Composio returns 404 for a previously-published post —
+  // the platform-side row is gone but we keep the local row + its
+  // historical metrics. Tier policy treats deleted_at IS NOT NULL as
+  // frozen.
+  ensureColumn("deleted_at", "TEXT")
 
   // Step 3 — indexes. Safe to reference any column at this point.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_twitter_posts_status ON twitter_posts(status);
     CREATE INDEX IF NOT EXISTS idx_twitter_posts_created_at ON twitter_posts(created_at);
     CREATE INDEX IF NOT EXISTS idx_twitter_posts_output_id ON twitter_posts(output_id);
+    CREATE INDEX IF NOT EXISTS idx_twitter_posts_published_at
+      ON twitter_posts(published_at)
+      WHERE status = 'published' AND deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_twitter_jobs_status_run_at ON twitter_jobs(status, run_at);
+    CREATE INDEX IF NOT EXISTS idx_twitter_post_metrics_captured
+      ON twitter_post_metrics(captured_at);
+    CREATE INDEX IF NOT EXISTS idx_twitter_metrics_runs_started
+      ON twitter_metrics_runs(started_at DESC);
   `)
 }
 
