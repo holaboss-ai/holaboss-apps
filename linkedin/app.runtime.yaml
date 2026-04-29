@@ -27,6 +27,9 @@ mcp:
     - linkedin_cancel_publish
     - linkedin_delete_post
     - linkedin_get_queue_stats
+    - linkedin_refresh_post_metrics
+    - linkedin_rollup_post_metrics
+    - linkedin_set_metrics_refresh
 
 integration:
   destination: "linkedin"
