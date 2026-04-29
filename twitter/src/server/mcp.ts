@@ -18,6 +18,12 @@ import {
   lookupUserByHandle,
   sendDirectMessage,
 } from "./dm"
+import {
+  isMetricsRefreshEnabled,
+  refreshPostMetrics,
+  setMetricsRefreshEnabled,
+} from "./metrics"
+import { rollupAndPrune } from "./metrics-rollup"
 import { enqueuePublish, getQueueStats } from "./queue"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
@@ -647,6 +653,149 @@ Errors: { code: 'validation_failed' } when handle is empty or malformed (handles
         return errCode(result.error.code, result.error.message, extra)
       }
       return success(result.data as unknown as Record<string, unknown>)
+    },
+  )
+
+  // ─── Post metrics ────────────────────────────────────────────────
+  // See holaOS/docs/plans/2026-04-28-post-metrics-convention.md.
+
+  const RefreshPostMetricsResultShape = {
+    run_id: z.number(),
+    posts_considered: z.number(),
+    posts_refreshed: z.number(),
+    posts_skipped: z.number(),
+    posts_deleted: z.number(),
+    rate_limited: z.boolean(),
+    errors: z.array(
+      z.object({ post_id: z.string(), error: z.string() }),
+    ),
+  }
+
+  server.registerTool(
+    "twitter_refresh_post_metrics",
+    {
+      title: "Refresh engagement metrics for Twitter posts",
+      description: `Pull latest impressions/likes/replies/retweets/bookmarks for published Twitter posts and append a snapshot row to twitter_post_metrics. The internal scheduler already calls this every 5 minutes against due posts (tier policy: 5min < 1h, 30min < 24h, 6h < 7d, 1d < 30d, frozen after) — so manual calls are only needed when you want to force a refresh sooner than the schedule, or to bring in a specific post.
+
+When to use: a user asks "how is my latest post doing?" or "refresh metrics now" or wants metrics on a post older than 7 days (which the first-launch backfill would otherwise have skipped). For scheduled / unattended polling, do nothing — the in-process scheduler handles it.
+When NOT to use: as a substitute for twitter_list_posts (this only writes metrics; it doesn't return post content). For posts that haven't been published yet (status != 'published') — they have no upstream id to query.
+Returns: { run_id, posts_considered, posts_refreshed, posts_skipped, posts_deleted, rate_limited, errors[] }. run_id is the row in twitter_metrics_runs. posts_skipped includes "not yet due per tier policy"; pass force=true to override.
+Prerequisites: a connected X account.
+Errors: structured-result-only — individual post failures are reported in the errors[] array, not thrown. A 429 from the upstream is reflected in rate_limited=true and the run truncates early; the next scheduled tick retries.`,
+      inputSchema: {
+        post_ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Restrict to specific local post ids. Empty/omitted = all currently due posts per tier policy.",
+          ),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            "Bypass tier policy + the 7-day backfill bound. Use sparingly — burns API quota.",
+          ),
+      },
+      outputSchema: RefreshPostMetricsResultShape,
+      annotations: {
+        title: "Refresh engagement metrics for Twitter posts",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ post_ids, force }) => {
+      try {
+        const result = await refreshPostMetrics({
+          post_ids,
+          force: Boolean(force),
+        })
+        return success(result as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_refresh_failed",
+        )
+      }
+    },
+  )
+
+  const RollupResultShape = {
+    run_id: z.number(),
+    days_rolled: z.number(),
+    rows_pruned: z.number(),
+  }
+
+  server.registerTool(
+    "twitter_rollup_post_metrics",
+    {
+      title: "Aggregate daily metrics + prune old snapshots",
+      description: `Roll up raw metrics snapshots into the daily table and delete raw snapshots older than 90 days. The scheduler runs this once per ~24h automatically; manual calls are useful right after a bulk backfill, or to force housekeeping on a stale workspace.
+
+When to use: only when you explicitly want to force the daily aggregation right now. For routine operation, do nothing — the scheduler handles it.
+When NOT to use: as a way to "clean up" data — that is what the scheduled call is for.
+Returns: { run_id, days_rolled, rows_pruned }.
+Errors: structured throwing not used — failures bubble as { code: 'internal' } with the message.`,
+      inputSchema: {},
+      outputSchema: RollupResultShape,
+      annotations: {
+        title: "Aggregate daily metrics + prune old snapshots",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        const result = rollupAndPrune()
+        return success(result as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_rollup_failed",
+        )
+      }
+    },
+  )
+
+  const SetRefreshResultShape = { enabled: z.boolean() }
+
+  server.registerTool(
+    "twitter_set_metrics_refresh",
+    {
+      title: "Pause or resume the Twitter metrics scheduler",
+      description: `Flip the metrics_refresh_enabled flag. When disabled, the in-process 5-minute scheduler skips refresh ticks (the rollup tick is unaffected — it operates on already-captured rows). State persists in the workspace db so it survives restart.
+
+When to use: a user asks to pause / resume metrics polling, e.g. "stop refreshing twitter metrics for now" or "save quota — disable metrics".
+When NOT to use: as a one-time skip — that's not a thing this exposes. As a way to reset retry state on errored posts (no current API for that).
+Returns: { enabled } reflecting the new state.
+Errors: { code: 'internal' } on db write failure.`,
+      inputSchema: {
+        enabled: z
+          .boolean()
+          .describe("true to resume scheduled refreshes, false to pause."),
+      },
+      outputSchema: SetRefreshResultShape,
+      annotations: {
+        title: "Pause or resume the Twitter metrics scheduler",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ enabled }) => {
+      try {
+        setMetricsRefreshEnabled(Boolean(enabled))
+        return success({ enabled: isMetricsRefreshEnabled() })
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_setting_failed",
+        )
+      }
     },
   )
 

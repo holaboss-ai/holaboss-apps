@@ -31,6 +31,9 @@ mcp:
     - twitter_list_dms
     - twitter_list_recent_dm_events
     - twitter_lookup_user_by_handle
+    - twitter_refresh_post_metrics
+    - twitter_rollup_post_metrics
+    - twitter_set_metrics_refresh
 
 integration:
   destination: "twitter"
