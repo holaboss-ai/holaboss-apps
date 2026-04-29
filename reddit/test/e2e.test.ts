@@ -36,10 +36,10 @@ describe("Reddit Module E2E", () => {
       const now = new Date().toISOString()
 
       db.prepare(
-        "INSERT INTO posts (id, title, content, subreddit, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?)",
+        "INSERT INTO reddit_posts (id, title, content, subreddit, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?)",
       ).run(testPostId, "Test Reddit Title", "Test body content", "testsubreddit", now, now)
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(testPostId) as PostRecord
       expect(post.title).toBe("Test Reddit Title")
       expect(post.content).toBe("Test body content")
       expect(post.subreddit).toBe("testsubreddit")
@@ -51,10 +51,10 @@ describe("Reddit Module E2E", () => {
       const db = getDb()
 
       db.prepare(
-        "UPDATE posts SET title = ?, content = ?, subreddit = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE reddit_posts SET title = ?, content = ?, subreddit = ?, updated_at = datetime('now') WHERE id = ?",
       ).run("Updated Title", "Updated body", "newsubreddit", testPostId)
 
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId) as PostRecord
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(testPostId) as PostRecord
       expect(post.title).toBe("Updated Title")
       expect(post.content).toBe("Updated body")
       expect(post.subreddit).toBe("newsubreddit")
@@ -65,7 +65,7 @@ describe("Reddit Module E2E", () => {
       const db = getDb()
 
       const drafts = db
-        .prepare("SELECT * FROM posts WHERE status = ?")
+        .prepare("SELECT * FROM reddit_posts WHERE status = ?")
         .all("draft") as PostRecord[]
       expect(drafts.length).toBeGreaterThanOrEqual(1)
       expect(drafts.every((p) => p.status === "draft")).toBe(true)
@@ -75,8 +75,8 @@ describe("Reddit Module E2E", () => {
       const { getDb } = await import("../src/server/db")
       const db = getDb()
 
-      db.prepare("DELETE FROM posts WHERE id = ?").run(testPostId)
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(testPostId)
+      db.prepare("DELETE FROM reddit_posts WHERE id = ?").run(testPostId)
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(testPostId)
       expect(post).toBeUndefined()
     })
   })
@@ -90,24 +90,24 @@ describe("Reddit Module E2E", () => {
       const id = randomUUID()
       const now = new Date().toISOString()
       db.prepare(
-        "INSERT INTO posts (id, title, content, subreddit, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?)",
+        "INSERT INTO reddit_posts (id, title, content, subreddit, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?)",
       ).run(id, "Lifecycle Title", `E2E lifecycle ${Date.now()}`, "programming", now, now)
 
-      const posts = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT 10").all() as PostRecord[]
+      const posts = db.prepare("SELECT * FROM reddit_posts ORDER BY created_at DESC LIMIT 10").all() as PostRecord[]
       expect(posts.find((p) => p.id === id)).toBeDefined()
 
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(id)
-      const queued = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      db.prepare("UPDATE reddit_posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(id)
+      const queued = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(id) as PostRecord
       expect(queued.status).toBe("queued")
 
       db.prepare(
-        "UPDATE posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+        "UPDATE reddit_posts SET status = 'published', external_post_id = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
       ).run("ext-reddit-123", id)
-      const published = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+      const published = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(id) as PostRecord
       expect(published.status).toBe("published")
       expect(published.external_post_id).toBe("ext-reddit-123")
 
-      db.prepare("DELETE FROM posts WHERE id = ?").run(id)
+      db.prepare("DELETE FROM reddit_posts WHERE id = ?").run(id)
     })
   })
 
@@ -201,7 +201,7 @@ describe("Reddit Module E2E", () => {
       })
 
       const db = getDb()
-      const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as { status: string }
+      const job = db.prepare("SELECT * FROM reddit_jobs WHERE id = ?").get(jobId) as { status: string }
       expect(job.status).toBe("delayed")
 
       const stats = getQueueStats()

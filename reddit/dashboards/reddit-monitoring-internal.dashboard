@@ -1,0 +1,94 @@
+title: Reddit Monitoring — Internal
+description: Per-post 4h × 12 snapshot timeline for tracked Reddit posts. Active monitoring window is 48 hours from registration.
+
+panels:
+  - type: kpi
+    title: Active monitoring
+    query: |
+      SELECT COUNT(*) AS value
+      FROM reddit_posts
+      WHERE source_url IS NOT NULL
+        AND monitoring_started_at IS NOT NULL
+        AND monitoring_completed_at IS NULL
+        AND deleted_at IS NULL
+
+  - type: kpi
+    title: Completed (48h passed)
+    query: |
+      SELECT COUNT(*) AS value
+      FROM reddit_posts
+      WHERE monitoring_completed_at IS NOT NULL
+        AND deleted_at IS NULL
+
+  - type: kpi
+    title: Removed during window
+    query: |
+      SELECT COUNT(*) AS value
+      FROM reddit_posts
+      WHERE source_url IS NOT NULL
+        AND deleted_at IS NOT NULL
+
+  - type: kpi
+    title: Snapshots captured
+    query: |
+      SELECT COUNT(*) AS value FROM reddit_post_metrics
+
+  - type: data_view
+    title: Snapshot timeline (most recent first)
+    query: |
+      SELECT
+        substr(p.subreddit, 1, 30)                          AS subreddit,
+        substr(p.title, 1, 60)                              AS title,
+        m.milestone_idx                                     AS milestone,
+        m.captured_at                                       AS captured_at,
+        m.score                                             AS upvotes,
+        m.num_comments                                      AS comments,
+        m.upvote_ratio                                      AS upvote_ratio,
+        CASE
+          WHEN p.deleted_at IS NULL THEN 'live'
+          ELSE 'removed'
+        END                                                 AS status,
+        p.source_url                                        AS url
+      FROM reddit_post_metrics m
+      JOIN reddit_posts p ON p.id = m.post_id
+      ORDER BY m.captured_at DESC
+      LIMIT 200
+    views:
+      - type: table
+        columns: [subreddit, title, milestone, captured_at, upvotes, comments, upvote_ratio, status, url]
+      - type: board
+        group_by: status
+        card_title: title
+        card_subtitle: captured_at
+    default_view: table
+
+  - type: data_view
+    title: Tracked posts
+    query: |
+      SELECT
+        substr(p.subreddit, 1, 30)            AS subreddit,
+        substr(p.title, 1, 60)                AS title,
+        CASE
+          WHEN p.deleted_at IS NOT NULL THEN 'removed'
+          WHEN p.monitoring_completed_at IS NOT NULL THEN 'completed'
+          ELSE 'active'
+        END                                   AS status,
+        p.monitoring_started_at               AS started_at,
+        COALESCE(snap.captures, 0)            AS captures,
+        p.deleted_reason                      AS deleted_reason,
+        p.source_url                          AS url
+      FROM reddit_posts p
+      LEFT JOIN (
+        SELECT post_id, COUNT(*) AS captures FROM reddit_post_metrics GROUP BY post_id
+      ) snap ON snap.post_id = p.id
+      WHERE p.source_url IS NOT NULL
+        AND p.monitoring_started_at IS NOT NULL
+      ORDER BY p.monitoring_started_at DESC
+    views:
+      - type: table
+        columns: [subreddit, title, status, started_at, captures, deleted_reason, url]
+      - type: board
+        group_by: status
+        card_title: title
+        card_subtitle: subreddit
+    default_view: board

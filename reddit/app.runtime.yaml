@@ -27,6 +27,11 @@ mcp:
     - reddit_cancel_publish
     - reddit_delete_post
     - reddit_get_queue_stats
+    - reddit_track_post
+    - reddit_list_tracked_posts
+    - reddit_set_post_views
+    - reddit_refresh_post_metrics
+    - reddit_set_metrics_refresh
 
 integration:
   destination: "reddit"
@@ -37,6 +42,7 @@ env_contract:
   - "HOLABOSS_USER_ID"
   - "WORKSPACE_API_URL"
   - "HOLABOSS_WORKSPACE_ID"
+  - "WORKSPACE_DB_PATH"
   - "WORKSPACE_REDDIT_INTEGRATION_ID"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"

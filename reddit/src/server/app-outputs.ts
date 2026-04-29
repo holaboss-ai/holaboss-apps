@@ -50,12 +50,12 @@ export async function syncPostOutputAndPersist(
   try {
     const outputId = await syncPostDraftArtifact(post, context)
     if (outputId && outputId !== post.output_id) {
-      db.prepare("UPDATE posts SET output_id = ? WHERE id = ?").run(
+      db.prepare("UPDATE reddit_posts SET output_id = ? WHERE id = ?").run(
         outputId,
         post.id,
       )
       return db
-        .prepare("SELECT * FROM posts WHERE id = ?")
+        .prepare("SELECT * FROM reddit_posts WHERE id = ?")
         .get(post.id) as PostRecord
     }
   } catch (syncError) {

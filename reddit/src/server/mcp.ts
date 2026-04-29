@@ -12,7 +12,13 @@ import {
   resolveHolabossTurnContext,
   updateAppOutput,
 } from "./holaboss-bridge"
+import {
+  isMetricsRefreshEnabled,
+  refreshPostMetrics,
+  setMetricsRefreshEnabled,
+} from "./metrics"
 import { enqueuePublish, getQueueStats } from "./queue"
+import { listTrackedPosts, setPostViews, trackPost } from "./tracking"
 
 // Tool descriptions follow ../../../docs/MCP_TOOL_DESCRIPTION_CONVENTION.md
 type ErrorCode =
@@ -124,10 +130,10 @@ Errors: { code: 'internal' } on unexpected exception.`,
         const id = randomUUID()
         const now = new Date().toISOString()
         db.prepare(
-          "INSERT INTO posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
+          "INSERT INTO reddit_posts (id, title, content, subreddit, status, scheduled_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)",
         ).run(id, title, content, subreddit, scheduled_at ?? null, now, now)
 
-        const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as PostRecord
+        const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(id) as PostRecord
         const synced = await syncAndPersist(db, post, extra.requestInfo?.headers)
         return success(synced as unknown as Record<string, unknown>)
       } catch (error) {
@@ -170,7 +176,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     },
     async ({ post_id, title, content, subreddit, scheduled_at }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
 
       const updates: string[] = ["updated_at = datetime('now')"]
@@ -181,8 +187,8 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
       if (scheduled_at) { updates.push("scheduled_at = ?"); params.push(scheduled_at) }
       params.push(post_id)
 
-      db.prepare(`UPDATE posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare(`UPDATE reddit_posts SET ${updates.join(", ")} WHERE id = ?`).run(...params)
+      const updated = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord
       const synced = await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success(synced as unknown as Record<string, unknown>)
     },
@@ -217,13 +223,13 @@ Returns: array of PostRecord. Empty array if none match.`,
       const max = limit ?? 20
       let rows: PostRecord[]
       if (status && subreddit) {
-        rows = db.prepare("SELECT * FROM posts WHERE status = ? AND subreddit = ? ORDER BY created_at DESC LIMIT ?").all(status, subreddit, max) as PostRecord[]
+        rows = db.prepare("SELECT * FROM reddit_posts WHERE status = ? AND subreddit = ? ORDER BY created_at DESC LIMIT ?").all(status, subreddit, max) as PostRecord[]
       } else if (status) {
-        rows = db.prepare("SELECT * FROM posts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as PostRecord[]
+        rows = db.prepare("SELECT * FROM reddit_posts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as PostRecord[]
       } else if (subreddit) {
-        rows = db.prepare("SELECT * FROM posts WHERE subreddit = ? ORDER BY created_at DESC LIMIT ?").all(subreddit, max) as PostRecord[]
+        rows = db.prepare("SELECT * FROM reddit_posts WHERE subreddit = ? ORDER BY created_at DESC LIMIT ?").all(subreddit, max) as PostRecord[]
       } else {
-        rows = db.prepare("SELECT * FROM posts ORDER BY created_at DESC LIMIT ?").all(max) as PostRecord[]
+        rows = db.prepare("SELECT * FROM reddit_posts ORDER BY created_at DESC LIMIT ?").all(max) as PostRecord[]
       }
       return text(rows)
     },
@@ -252,7 +258,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       return success(post as unknown as Record<string, unknown>)
     },
@@ -283,7 +289,7 @@ Errors: { code: 'not_found' } if post_id is unknown. Subreddit-specific submissi
     },
     async ({ post_id }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
 
       const userId = process.env.HOLABOSS_USER_ID ?? ""
@@ -296,8 +302,8 @@ Errors: { code: 'not_found' } if post_id is unknown. Subreddit-specific submissi
         scheduled_at: post.scheduled_at,
       })
 
-      db.prepare("UPDATE posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare("UPDATE reddit_posts SET status = 'queued', updated_at = datetime('now') WHERE id = ?").run(post_id)
+      const updated = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success({ job_id: jobId, status: "queued" as const })
     },
@@ -328,7 +334,7 @@ Errors: { code: 'not_found' } if post_id is unknown.`,
     async ({ post_id }) => {
       const db = getDb()
       const post = db
-        .prepare("SELECT status, error_message, published_at, updated_at FROM posts WHERE id = ?")
+        .prepare("SELECT status, error_message, published_at, updated_at FROM reddit_posts WHERE id = ?")
         .get(post_id) as Record<string, unknown> | undefined
       if (!post) return errCode("not_found", "Post not found")
       return success(post)
@@ -359,13 +365,13 @@ Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', cu
     },
     async ({ post_id }, extra) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       if (post.status !== "scheduled" && post.status !== "queued") {
         return errCode("invalid_state", `Cannot cancel post in '${post.status}' state`, { current_status: post.status, allowed_from: ["queued", "scheduled"] })
       }
-      db.prepare("UPDATE posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
-      const updated = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord
+      db.prepare("UPDATE reddit_posts SET status = 'draft', scheduled_at = NULL, updated_at = datetime('now') WHERE id = ?").run(post_id)
+      const updated = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord
       await syncAndPersist(db, updated, extra.requestInfo?.headers)
       return success({ cancelled: true as const })
     },
@@ -395,11 +401,11 @@ Errors: { code: 'not_found' } if post_id is unknown; { code: 'invalid_state', cu
     },
     async ({ post_id }) => {
       const db = getDb()
-      const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(post_id) as PostRecord | undefined
+      const post = db.prepare("SELECT * FROM reddit_posts WHERE id = ?").get(post_id) as PostRecord | undefined
       if (!post) return errCode("not_found", "Post not found")
       if (post.status === "queued" || post.status === "scheduled") return errCode("invalid_state", `Cannot delete post in '${post.status}' state. Cancel it first.`, { current_status: post.status, hint: "call reddit_cancel_publish first" })
       if (post.status === "published") return errCode("invalid_state", "Cannot delete a published post", { current_status: "published" })
-      db.prepare("DELETE FROM posts WHERE id = ?").run(post_id)
+      db.prepare("DELETE FROM reddit_posts WHERE id = ?").run(post_id)
       if (post.output_id) {
         try {
           await updateAppOutput(post.output_id, { status: "deleted" })
@@ -432,6 +438,244 @@ Returns: { waiting, active, completed, failed, delayed }.`,
     async () => {
       const stats = await getQueueStats()
       return success(stats as unknown as Record<string, unknown>)
+    },
+  )
+
+  // ─── Reddit post monitoring ──────────────────────────────────────
+  // Lifecycle: track_post (register URL) → scheduler refreshes every
+  // 4h (12 captures over 48h) → 48h freeze with final values + manual
+  // views.
+
+  const TrackPostResultShape = {
+    post_id: z.string(),
+    external_post_id: z.string(),
+    subreddit: z.string(),
+    title: z.string(),
+    source_url: z.string(),
+    published_at: z.string().nullable(),
+    monitoring_started_at: z.string(),
+    already_tracked: z.boolean(),
+  }
+
+  server.registerTool(
+    "reddit_track_post",
+    {
+      title: "Register a Reddit post URL for 48-hour monitoring",
+      description: `Register an externally-published Reddit post for fixed-window monitoring. Once registered, the in-process scheduler captures upvotes / comments / upvote_ratio every 4 hours for 48 hours (12 snapshots). After 48h the final values are frozen on the post record and the dashboard prompts the user to manually fill in the Views count.
+
+When to use: a user pastes a Reddit post URL and asks to "track this", "monitor this", "watch this for the first 48 hours", or you're processing a batch of links the user dropped into chat. Re-registering an already-tracked URL is idempotent — the original tracking continues, and the response indicates already_tracked=true.
+When NOT to use: for posts the app drafted itself (use the publish flow + the Twitter-style metrics path instead). For posts you only need a single one-off score for (just call the Reddit API directly via the agent's general HTTP tooling — no need to take up a tracking slot).
+Returns: { post_id, external_post_id, subreddit, title, source_url, published_at, monitoring_started_at, already_tracked }. post_id is the local id you'll pass to other tools (refresh, set_views, etc.).
+Prerequisites: a connected Reddit account.
+Errors: { code: 'validation_failed' } when URL doesn't parse or subreddit can't be inferred. { code: 'not_found' } when the post id resolves to nothing on Reddit. { code: 'not_connected' } on 401/403. { code: 'rate_limited' } on 429. { code: 'upstream_error' } on 5xx.`,
+      inputSchema: {
+        url: z
+          .string()
+          .min(1)
+          .describe(
+            "Reddit post URL. Accepts reddit.com/r/<sub>/comments/<id>/..., redd.it/<id>, t3_<id>, or a bare base36 id.",
+          ),
+        subreddit: z
+          .string()
+          .optional()
+          .describe(
+            "Subreddit name (without r/ prefix). Required only for short links / bare ids that don't carry the subreddit; otherwise inferred.",
+          ),
+      },
+      outputSchema: TrackPostResultShape,
+      annotations: {
+        title: "Register a Reddit post URL for 48-hour monitoring",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ url, subreddit }) => {
+      const result = await trackPost({ url, subreddit: subreddit ?? null })
+      if (!result.ok) {
+        return errCode(result.error.code, result.error.message)
+      }
+      return success(result.data as unknown as Record<string, unknown>)
+    },
+  )
+
+  const TrackedPostListItemShape = z.object({
+    post_id: z.string(),
+    external_post_id: z.string().nullable(),
+    subreddit: z.string(),
+    title: z.string(),
+    source_url: z.string().nullable(),
+    published_at: z.string().nullable(),
+    monitoring_started_at: z.string().nullable(),
+    monitoring_completed_at: z.string().nullable(),
+    deleted_at: z.string().nullable(),
+    deleted_reason: z.string().nullable(),
+    views: z.number().nullable(),
+    final_score: z.number().nullable(),
+    final_num_comments: z.number().nullable(),
+    final_upvote_ratio: z.number().nullable(),
+  })
+
+  server.registerTool(
+    "reddit_list_tracked_posts",
+    {
+      title: "List Reddit posts under monitoring",
+      description: `Return every post that has been registered for tracking, with its current monitoring status, removal info if any, and final values once the 48h window has closed. Use this to compose summary tables, find posts that still need a Views count entered, or audit which posts are mid-monitoring.
+
+When to use: composing the internal / external monitoring dashboards, answering "what posts are we tracking right now?", or finding the post_id to pass into reddit_set_post_views.
+When NOT to use: when you only need the freshly-pulled metric values for a known post — query the SQL directly off reddit_post_metrics, that's denser.
+Returns: { items: TrackedPostListItem[] }.`,
+      inputSchema: {},
+      outputSchema: { items: z.array(TrackedPostListItemShape) },
+      annotations: {
+        title: "List Reddit posts under monitoring",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const items = listTrackedPosts()
+      return success({ items } as unknown as Record<string, unknown>)
+    },
+  )
+
+  const SetPostViewsResultShape = {
+    post_id: z.string(),
+    views: z.number(),
+    monitoring_completed_at: z.string().nullable(),
+  }
+
+  server.registerTool(
+    "reddit_set_post_views",
+    {
+      title: "Set the manually-entered Views count for a tracked Reddit post",
+      description: `Reddit's public API doesn't reliably expose post view counts to the post owner — the value is provided manually after the 48h monitoring window closes. This tool persists that number on the post row so the external summary dashboard can show it alongside the captured upvotes / comments.
+
+When to use: a user supplies the Views number for a tracked post (typically while filling in an output report), or the user wants to update an existing entry.
+When NOT to use: as a substitute for the automated metrics capture (the scheduler handles upvotes / comments). Before the monitoring window has elapsed (still allowed, but the value reads as a moving target — usually you want the final count).
+Returns: { post_id, views, monitoring_completed_at }.
+Errors: { code: 'not_found' } when post_id doesn't exist. { code: 'validation_failed' } when views is negative or non-numeric.`,
+      inputSchema: {
+        post_id: z.string().describe("Local post id (from reddit_track_post or reddit_list_tracked_posts)."),
+        views: z.number().int().nonnegative().describe("Manually-entered Views count."),
+      },
+      outputSchema: SetPostViewsResultShape,
+      annotations: {
+        title: "Set the manually-entered Views count for a tracked Reddit post",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ post_id, views }) => {
+      try {
+        const updated = setPostViews({ post_id, views })
+        if (!updated) {
+          return errCode("not_found", `No tracked post with id "${post_id}"`)
+        }
+        return success(updated as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "validation_failed",
+          err instanceof Error ? err.message : "set_views_failed",
+        )
+      }
+    },
+  )
+
+  const RefreshResultShape = {
+    run_id: z.number(),
+    posts_considered: z.number(),
+    posts_refreshed: z.number(),
+    posts_skipped: z.number(),
+    posts_deleted: z.number(),
+    posts_completed: z.number(),
+    rate_limited: z.boolean(),
+    errors: z.array(z.object({ post_id: z.string(), error: z.string() })),
+  }
+
+  server.registerTool(
+    "reddit_refresh_post_metrics",
+    {
+      title: "Refresh Reddit metrics for tracked posts",
+      description: `Capture a fresh snapshot for any tracked Reddit post that has crossed its next 4h milestone. The in-process scheduler already calls this every 5 minutes and skips posts not yet due — most agent-driven calls will just want force=true on a specific post.
+
+When to use: user asks to "refresh now" for a specific post, or you want to seed the very first snapshot immediately after track_post (the scheduler's next 5-min tick may be 4 minutes away).
+When NOT to use: as a way to skip the milestone schedule on the routine path (the per-post cap is still 12 snapshots over 48h regardless).
+Returns: { run_id, posts_considered, posts_refreshed, posts_skipped, posts_deleted, posts_completed, rate_limited, errors[] }.
+Errors: structured-result-only for per-post failures; rate_limited=true reflects 429.`,
+      inputSchema: {
+        post_ids: z
+          .array(z.string())
+          .optional()
+          .describe("Restrict to specific local post ids."),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Bypass the milestone check and capture now."),
+      },
+      outputSchema: RefreshResultShape,
+      annotations: {
+        title: "Refresh Reddit metrics for tracked posts",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ post_ids, force }) => {
+      try {
+        const result = await refreshPostMetrics({
+          post_ids,
+          force: Boolean(force),
+        })
+        return success(result as unknown as Record<string, unknown>)
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_refresh_failed",
+        )
+      }
+    },
+  )
+
+  const SetRefreshResultShape = { enabled: z.boolean() }
+
+  server.registerTool(
+    "reddit_set_metrics_refresh",
+    {
+      title: "Pause or resume the Reddit metrics scheduler",
+      description: `Flip the metrics_refresh_enabled flag stored in reddit_settings. When disabled, the in-process scheduler skips refresh ticks; tracked posts continue accumulating untouched until re-enabled.
+
+When to use: the user asks to pause / resume monitoring globally, e.g. during a sensitive period, while debugging quota issues, or after a known Composio outage.
+When NOT to use: to mute a single post (no per-post mute exists yet — the deletion path covers genuinely-removed posts already).
+Returns: { enabled }.`,
+      inputSchema: {
+        enabled: z.boolean(),
+      },
+      outputSchema: SetRefreshResultShape,
+      annotations: {
+        title: "Pause or resume the Reddit metrics scheduler",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ enabled }) => {
+      try {
+        setMetricsRefreshEnabled(Boolean(enabled))
+        return success({ enabled: isMetricsRefreshEnabled() })
+      } catch (err) {
+        return errCode(
+          "internal",
+          err instanceof Error ? err.message : "metrics_setting_failed",
+        )
+      }
     },
   )
 
