@@ -30,6 +30,8 @@ mcp:
     - "hubspot_update_deal_stage"
     - "hubspot_add_note"
     - "hubspot_create_task"
+    - "hubspot_sync_crm"
+    - "hubspot_set_sync_enabled"
 
 integration:
   destination: "hubspot"

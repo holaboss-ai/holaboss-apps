@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { apiGet, apiPost, apiPatch } from "./attio-client"
 import { wrapTool } from "./audit"
 import { buildFuzzyPeopleQuery, buildFuzzyCompaniesQuery } from "./query-builder"
+import { isSyncEnabled, setSyncEnabled, syncCrm } from "./sync"
 import type { AttioError, AttioRecord, Result, ToolSuccessMeta } from "../lib/types"
 
 const ATTIO_APP_BASE = "https://app.attio.com"
@@ -512,6 +513,84 @@ const TasksListShape = { tasks: z.array(RecordRefSchema), ...ToolSuccessMetaShap
 const ListEntriesShape = { entries: z.array(RecordRefSchema), ...ToolSuccessMetaShape }
 const ListEntryShape = { entry_id: z.string(), ...ToolSuccessMetaShape }
 
+const SyncObjectShape = z.object({
+  object_slug: z.string(),
+  records_seen: z.number(),
+  records_inserted: z.number(),
+  records_updated: z.number(),
+  errors_count: z.number(),
+})
+const SyncCrmShape = {
+  total_inserted: z.number(),
+  total_updated: z.number(),
+  rate_limited: z.boolean(),
+  per_object: z.array(SyncObjectShape),
+  ...ToolSuccessMetaShape,
+}
+const SetSyncEnabledShape = { enabled: z.boolean(), ...ToolSuccessMetaShape }
+
+// -------------------- Sync (local mirror) --------------------
+
+export interface SyncCrmInput { full?: boolean; objects?: Array<"people" | "companies" | "deals"> }
+export async function syncCrmImpl(
+  input: SyncCrmInput,
+): Promise<
+  Result<
+    {
+      total_inserted: number
+      total_updated: number
+      rate_limited: boolean
+      per_object: Array<{
+        object_slug: string
+        records_seen: number
+        records_inserted: number
+        records_updated: number
+        errors_count: number
+      }>
+    } & ToolSuccessMeta,
+    AttioError
+  >
+> {
+  try {
+    const r = await syncCrm({ full: input.full, objects: input.objects })
+    return {
+      ok: true,
+      data: {
+        total_inserted: r.total_inserted,
+        total_updated: r.total_updated,
+        rate_limited: r.rate_limited,
+        per_object: r.per_object.map((p) => ({
+          object_slug: p.object_slug,
+          records_seen: p.records_seen,
+          records_inserted: p.records_inserted,
+          records_updated: p.records_updated,
+          errors_count: p.errors.length,
+        })),
+        result_summary: `Synced ${r.total_inserted + r.total_updated} record(s) across ${r.per_object.length} object(s)`,
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: { code: "internal", message: err instanceof Error ? err.message : String(err) },
+    }
+  }
+}
+
+export interface SetSyncEnabledInput { enabled: boolean }
+export async function setSyncEnabledImpl(
+  input: SetSyncEnabledInput,
+): Promise<Result<{ enabled: boolean } & ToolSuccessMeta, AttioError>> {
+  setSyncEnabled(input.enabled)
+  return {
+    ok: true,
+    data: {
+      enabled: isSyncEnabled(),
+      result_summary: input.enabled ? "Attio sync enabled" : "Attio sync disabled",
+    },
+  }
+}
+
 export function registerTools(server: McpServer): void {
   const findPeople = wrapTool("attio_find_people", findPeopleImpl)
   const getPerson = wrapTool("attio_get_person", getPersonImpl)
@@ -525,6 +604,8 @@ export function registerTools(server: McpServer): void {
   const listTasks = wrapTool("attio_list_tasks", listTasksImpl)
   const listRecordsInList = wrapTool("attio_list_records_in_list", listRecordsInListImpl)
   const addToList = wrapTool("attio_add_to_list", addToListImpl)
+  const syncCrmTool = wrapTool("attio_sync_crm", syncCrmImpl)
+  const setSyncEnabledTool = wrapTool("attio_set_sync_enabled", setSyncEnabledImpl)
 
   server.registerTool(
     "attio_describe_schema",
@@ -920,5 +1001,60 @@ Returns: { entry_id, parent_record_id, ... }.`,
       },
     },
     async (args) => asText(await addToList(args)),
+  )
+
+  server.registerTool(
+    "attio_sync_crm",
+    {
+      title: "Sync Attio CRM",
+      description: `Pull records from Attio's standard objects (people, companies, deals) into the local mirror tables (attio_people, attio_companies, attio_deals). Runs automatically every 30 minutes; full reconciliation runs daily. Use this tool to force an immediate refresh.
+
+When to use: the user asks "sync my CRM now", or after creating/updating records via attio_create_person / attio_update_person and you want the mirror to reflect them before answering downstream questions.
+Default mode (full=false): incremental — pulls records updated since the last sync. Misses deletions.
+Full mode (full=true): paginates everything (capped at 5000 per object). Detects deletions but more expensive.
+Returns: { total_inserted, total_updated, rate_limited, per_object: [{ object_slug, records_seen, records_inserted, records_updated, errors_count }] }.`,
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("If true, paginate everything (capped at 5000 per object). Default false = incremental since last sync."),
+        objects: z
+          .array(z.enum(["people", "companies", "deals"]))
+          .optional()
+          .describe("Restrict to a subset of standard objects. Default: all three."),
+      },
+      outputSchema: SyncCrmShape,
+      annotations: {
+        title: "Sync Attio CRM",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => asText(await syncCrmTool(args)),
+  )
+
+  server.registerTool(
+    "attio_set_sync_enabled",
+    {
+      title: "Enable or disable Attio sync",
+      description: `Turn the 30-minute auto-sync of Attio records on or off. The mirror tables still serve stale reads when disabled.
+
+When to use: the user explicitly asks to pause / resume CRM syncing.
+Returns: { enabled, result_summary }.`,
+      inputSchema: {
+        enabled: z.boolean().describe("true to enable auto-sync; false to disable."),
+      },
+      outputSchema: SetSyncEnabledShape,
+      annotations: {
+        title: "Set Attio sync enabled",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => asText(await setSyncEnabledTool(args)),
   )
 }
