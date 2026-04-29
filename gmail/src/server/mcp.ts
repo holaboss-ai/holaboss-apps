@@ -99,7 +99,7 @@ function firstNonEmpty(values: Array<string | null | undefined>): string {
 }
 
 function persistDraftOutputId(db: ReturnType<typeof getDb>, draftId: string, outputId: string) {
-  db.prepare("UPDATE drafts SET output_id = ? WHERE id = ?").run(outputId, draftId)
+  db.prepare("UPDATE gmail_drafts SET output_id = ? WHERE id = ?").run(outputId, draftId)
 }
 
 function createMcpServer(): McpServer {
@@ -282,9 +282,9 @@ Errors: { code: 'upstream_error' } if the workspace output sync fails.`,
         const db = getDb()
         const id = randomUUID()
         db.prepare(
-          "INSERT INTO drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
+          "INSERT INTO gmail_drafts (id, to_email, gmail_thread_id, subject, body, status) VALUES (?, ?, ?, ?, ?, 'pending')",
         ).run(id, to_email, thread_id ?? null, subject ?? null, body)
-        let draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+        let draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(id) as DraftRecord
         const context = resolveHolabossTurnContext(extra.requestInfo?.headers)
         try {
           const outputId = await syncDraftOutput(
@@ -294,10 +294,10 @@ Errors: { code: 'upstream_error' } if the workspace output sync fails.`,
           )
           if (outputId && outputId !== draft.output_id) {
             persistDraftOutputId(db, draft.id, outputId)
-            draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(id) as DraftRecord
+            draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(id) as DraftRecord
           }
         } catch (outputError) {
-          db.prepare("DELETE FROM drafts WHERE id = ?").run(id)
+          db.prepare("DELETE FROM gmail_drafts WHERE id = ?").run(id)
           throw outputError
         }
         return success(draft as unknown as Record<string, unknown>)
@@ -334,7 +334,7 @@ Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', c
     async ({ draft_id }) => {
       try {
         const db = getDb()
-        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
         if (!draft) return errCode("not_found", "Draft not found")
         if (draft.status !== "pending" && draft.status !== "failed") return errCode("invalid_state", `Draft cannot be sent (status: ${draft.status})`, { current_status: draft.status, allowed_from: ["pending", "failed"] })
 
@@ -349,7 +349,7 @@ Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', c
         })
 
         db.prepare(
-          "UPDATE drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
+          "UPDATE gmail_drafts SET status = 'queued', error_message = NULL, updated_at = datetime('now') WHERE id = ?",
         ).run(draft_id)
 
         return success({
@@ -393,12 +393,12 @@ Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', c
     async ({ draft_id, to_email, subject, body, thread_id }) => {
       try {
         const db = getDb()
-        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
         if (!draft) return errCode("not_found", "Draft not found")
         if (draft.status !== "pending" && draft.status !== "failed") return errCode("invalid_state", `Draft cannot be edited (status: ${draft.status})`, { current_status: draft.status, allowed_from: ["pending", "failed"] })
 
         db.prepare(`
-          UPDATE drafts SET
+          UPDATE gmail_drafts SET
             to_email = COALESCE(?, to_email),
             subject = COALESCE(?, subject),
             body = COALESCE(?, body),
@@ -409,7 +409,7 @@ Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', c
           WHERE id = ?
         `).run(to_email ?? null, subject ?? null, body ?? null, thread_id ?? null, draft_id)
 
-        const updated = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord
+        const updated = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draft_id) as DraftRecord
         try {
           await syncDraftOutput(updated)
         } catch (outputError) {
@@ -447,7 +447,7 @@ Errors: { code: 'not_found' } if draft_id is unknown.`,
     async ({ draft_id }) => {
       try {
         const db = getDb()
-        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
         if (!draft) return errCode("not_found", "Draft not found")
         return success({
           draft_id,
@@ -487,11 +487,11 @@ Errors: { code: 'not_found' } if draft_id is unknown; { code: 'invalid_state', c
     async ({ draft_id }) => {
       try {
         const db = getDb()
-        const draft = db.prepare("SELECT * FROM drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
+        const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ?").get(draft_id) as DraftRecord | undefined
         if (!draft) return errCode("not_found", "Draft not found")
         if (draft.status === "queued") return errCode("invalid_state", "Cannot delete a draft that is currently being sent", { current_status: "queued" })
         if (draft.status === "sent") return errCode("invalid_state", "Cannot delete a sent email", { current_status: "sent" })
-        db.prepare("DELETE FROM drafts WHERE id = ?").run(draft_id)
+        db.prepare("DELETE FROM gmail_drafts WHERE id = ?").run(draft_id)
         return success({ deleted: true as const, draft_id })
       } catch (e) {
         return upstreamErr(e)
@@ -528,9 +528,9 @@ Returns: array of DraftRecord. Empty array if none match.`,
         const max = limit ?? 20
         let rows: DraftRecord[]
         if (status) {
-          rows = db.prepare("SELECT * FROM drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as DraftRecord[]
+          rows = db.prepare("SELECT * FROM gmail_drafts WHERE status = ? ORDER BY created_at DESC LIMIT ?").all(status, max) as DraftRecord[]
         } else {
-          rows = db.prepare("SELECT * FROM drafts ORDER BY created_at DESC LIMIT ?").all(max) as DraftRecord[]
+          rows = db.prepare("SELECT * FROM gmail_drafts ORDER BY created_at DESC LIMIT ?").all(max) as DraftRecord[]
         }
         return text(rows)
       } catch (e) {

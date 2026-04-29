@@ -5,14 +5,14 @@ import { getThread, parseMessage, type ParsedMessage } from "./google-api"
 
 export const fetchDrafts = createServerFn({ method: "GET" }).handler(async () => {
   const db = getDb()
-  return db.prepare("SELECT * FROM drafts ORDER BY created_at DESC LIMIT 50").all() as DraftRecord[]
+  return db.prepare("SELECT * FROM gmail_drafts ORDER BY created_at DESC LIMIT 50").all() as DraftRecord[]
 })
 
 export const fetchDraftById = createServerFn({ method: "GET" })
   .inputValidator((data: { draftId: string }) => data)
   .handler(async ({ data }) => {
     const db = getDb()
-    const draft = db.prepare("SELECT * FROM drafts WHERE id = ? LIMIT 1").get(data.draftId) as DraftRecord | undefined
+    const draft = db.prepare("SELECT * FROM gmail_drafts WHERE id = ? LIMIT 1").get(data.draftId) as DraftRecord | undefined
     return draft ?? null
   })
 

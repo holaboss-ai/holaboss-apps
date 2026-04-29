@@ -57,7 +57,7 @@ function recordAction<A, T>(
     error_message: result.ok ? null : result.error.message,
   }
   db.prepare(`
-    INSERT INTO agent_actions (
+    INSERT INTO instantly_agent_actions (
       id, timestamp, tool_name, args_json, outcome, duration_ms,
       instantly_object, instantly_record_id, instantly_deep_link, result_summary,
       error_code, error_message
@@ -78,7 +78,7 @@ export function listRecentActions(params: {
   if (params.since) {
     return db
       .prepare(`
-        SELECT * FROM agent_actions
+        SELECT * FROM instantly_agent_actions
         WHERE id > @since
         ORDER BY timestamp DESC
         LIMIT @limit
@@ -87,7 +87,7 @@ export function listRecentActions(params: {
   }
   return db
     .prepare(`
-      SELECT * FROM agent_actions
+      SELECT * FROM instantly_agent_actions
       ORDER BY timestamp DESC
       LIMIT @limit
     `)
@@ -96,5 +96,5 @@ export function listRecentActions(params: {
 
 export function clearActions(): number {
   const db = getDb()
-  return db.prepare("DELETE FROM agent_actions").run().changes
+  return db.prepare("DELETE FROM instantly_agent_actions").run().changes
 }
