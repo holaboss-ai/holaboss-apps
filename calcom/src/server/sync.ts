@@ -27,9 +27,23 @@ const INCREMENTAL_LOOKBACK_DAYS = 30
 
 type RawBooking = Record<string, unknown>
 
-interface BookingsListResponse {
-  data?: RawBooking[]
-  pagination?: { take?: number; skip?: number; total?: number }
+// Cal.com v2 documents the bookings list as { status, data: [...] } but
+// some envelopes nest it under data.bookings, and the Composio broker
+// can also return the items directly as an array. Handle all three.
+type BookingsListResponse =
+  | { data?: RawBooking[]; pagination?: { take?: number; skip?: number; total?: number } }
+  | { data?: { bookings?: RawBooking[]; pagination?: unknown } }
+  | RawBooking[]
+
+function extractBookings(data: BookingsListResponse | null | undefined): RawBooking[] {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  const inner = (data as { data?: unknown }).data
+  if (Array.isArray(inner)) return inner as RawBooking[]
+  if (inner && typeof inner === "object" && Array.isArray((inner as Record<string, unknown>).bookings)) {
+    return (inner as { bookings: RawBooking[] }).bookings
+  }
+  return []
 }
 
 export interface SyncOpts {
@@ -93,7 +107,7 @@ export async function syncBookings(opts: SyncOpts = {}): Promise<SyncResult> {
       }
       incrementUsage(db, "calls_succeeded", 1)
 
-      const page = r.data?.data ?? []
+      const page = extractBookings(r.data)
       if (page.length === 0) break
 
       for (const raw of page) {
