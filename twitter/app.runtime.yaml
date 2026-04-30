@@ -48,3 +48,130 @@ env_contract:
   - "WORKSPACE_X_INTEGRATION_ID"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"
+
+# Tier 2 of the workspace data layer (see
+# holaOS/docs/plans/2026-04-30-workspace-data-layer-tier2.md). The
+# runtime parses this manifest and applies CREATE TABLE / ALTER /
+# CREATE INDEX against the workspace's data.db before spawning the
+# app, so the app's getDb() can just `new Database(path)` without
+# bootstrap DDL.
+#
+# Bump `version` on every schema change. Additive changes (new table,
+# new nullable column, new index) auto-apply via the runtime's diff.
+# Destructive changes (drop / rename / type change) need an explicit
+# migration block (TODO once a real one comes up).
+data_schema:
+  version: 1
+  tables:
+
+    # Drafts → scheduled → published lifecycle for tweets the agent
+    # composes. `output_id` ties a row to the workspace's outputs
+    # table; `external_post_id` is X.com's tweet id once published.
+    # `deleted_at` flags rows whose remote tweet has been removed —
+    # we keep the local row + its historical metrics rather than
+    # losing context, and the metrics scheduler treats it as frozen.
+    twitter_posts:
+      visibility: user_facing
+      columns:
+        id:               { type: TEXT, primary_key: true }
+        content:          { type: TEXT, not_null: true }
+        status:           { type: TEXT, not_null: true, default: "'draft'" }
+        output_id:        { type: TEXT }
+        external_post_id: { type: TEXT }
+        scheduled_at:     { type: TEXT }
+        published_at:     { type: TEXT }
+        deleted_at:       { type: TEXT }
+        error_message:    { type: TEXT }
+        created_at:       { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:       { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_twitter_posts_status,     columns: [status] }
+        - { name: idx_twitter_posts_created_at, columns: [created_at] }
+        - { name: idx_twitter_posts_output_id,  columns: [output_id] }
+        - name: idx_twitter_posts_published_at
+          columns: [published_at]
+          where: "status = 'published' AND deleted_at IS NULL"
+
+    # SQLite-backed publish queue. Replaces what BullMQ would do in a
+    # Redis world; intentionally simple — workers poll on run_at.
+    twitter_jobs:
+      visibility: app_internal
+      columns:
+        id:            { type: TEXT, primary_key: true }
+        type:          { type: TEXT, not_null: true, default: "'publish'" }
+        payload:       { type: TEXT, not_null: true }
+        status:        { type: TEXT, not_null: true, default: "'waiting'" }
+        run_at:        { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        attempts:      { type: INTEGER, not_null: true, default: "0" }
+        max_attempts:  { type: INTEGER, not_null: true, default: "3" }
+        error_message: { type: TEXT }
+        created_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_twitter_jobs_status_run_at, columns: [status, run_at] }
+
+    # Raw engagement snapshots — one row per (post, capture-time).
+    # The metrics scheduler appends here on every refresh tick. The
+    # rollup task aggregates into the _daily companion table and
+    # then prunes old rows.
+    twitter_post_metrics:
+      visibility: user_facing
+      columns:
+        post_id:     { type: TEXT, not_null: true }
+        captured_at: { type: TEXT, not_null: true }
+        impressions: { type: INTEGER }
+        likes:       { type: INTEGER }
+        comments:    { type: INTEGER }
+        shares:      { type: INTEGER }
+        bookmarks:   { type: INTEGER }
+        raw:         { type: TEXT }
+      primary_key: [post_id, captured_at]
+      indexes:
+        - { name: idx_twitter_post_metrics_captured, columns: [captured_at] }
+
+    twitter_post_metrics_daily:
+      visibility: user_facing
+      columns:
+        post_id:     { type: TEXT, not_null: true }
+        day:         { type: TEXT, not_null: true }
+        impressions: { type: INTEGER }
+        likes:       { type: INTEGER }
+        comments:    { type: INTEGER }
+        shares:      { type: INTEGER }
+        bookmarks:   { type: INTEGER }
+      primary_key: [post_id, day]
+
+    twitter_metrics_runs:
+      visibility: app_internal
+      columns:
+        id:               { type: INTEGER, primary_key: true }   # AUTOINCREMENT not declarable here; SQLite generates one
+        started_at:       { type: TEXT, not_null: true }
+        finished_at:      { type: TEXT }
+        kind:             { type: TEXT, not_null: true, default: "'refresh'" }
+        posts_considered: { type: INTEGER, not_null: true, default: "0" }
+        posts_refreshed:  { type: INTEGER, not_null: true, default: "0" }
+        posts_skipped:    { type: INTEGER, not_null: true, default: "0" }
+        posts_deleted:    { type: INTEGER, not_null: true, default: "0" }
+        errors_json:      { type: TEXT }
+      indexes:
+        - { name: idx_twitter_metrics_runs_started, columns: [started_at] }
+
+    twitter_api_usage:
+      visibility: app_internal
+      columns:
+        date:               { type: TEXT, primary_key: true }
+        calls_succeeded:    { type: INTEGER, not_null: true, default: "0" }
+        calls_failed:       { type: INTEGER, not_null: true, default: "0" }
+        calls_rate_limited: { type: INTEGER, not_null: true, default: "0" }
+        updated_at:         { type: TEXT, not_null: true, default: "(datetime('now'))" }
+
+    # Pause flags + small per-app config. Was created lazily inside
+    # metrics.ts in the Tier 0 era; centralising it here gets rid of
+    # the "first call to setMetricsRefreshEnabled creates the table"
+    # weirdness.
+    twitter_settings:
+      visibility: app_internal
+      columns:
+        key:        { type: TEXT, primary_key: true }
+        value:      { type: TEXT, not_null: true }
+        updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }
