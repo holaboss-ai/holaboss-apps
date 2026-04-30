@@ -1,0 +1,144 @@
+title: Charts — every kind on one page
+description: line / bar / area / pie / donut against live workspace data.
+
+panels:
+  # ---- Line chart: scheduler activity over the last 14 days -------
+  - type: chart
+    title: Twitter scheduler activity
+    description: Daily run counts, last 14 days
+    empty_state: Scheduler hasn't run yet today.
+    query: |
+      SELECT
+        date(started_at) AS day,
+        SUM(posts_refreshed) AS refreshed,
+        SUM(posts_skipped)   AS skipped,
+        SUM(posts_deleted)   AS deleted
+      FROM twitter_metrics_runs
+      WHERE started_at >= datetime('now', '-14 days')
+      GROUP BY date(started_at)
+      ORDER BY day
+    chart:
+      kind: line
+      x: day
+      y: [refreshed, skipped, deleted]
+      x_format: date
+      y_format: integer
+
+  # ---- Bar + Pie side by side (width: half) -----------------------
+  - type: chart
+    title: Posts by status
+    description: All platforms combined
+    width: half
+    empty_state: No posts yet.
+    query: |
+      SELECT status, COUNT(*) AS count FROM (
+        SELECT status FROM twitter_posts WHERE deleted_at IS NULL
+        UNION ALL SELECT status FROM reddit_posts  WHERE deleted_at IS NULL
+      )
+      GROUP BY status
+      ORDER BY count DESC
+    chart:
+      kind: bar
+      x: status
+      y: [count]
+      y_format: integer
+
+  - type: chart
+    title: Posts by platform
+    width: half
+    empty_state: No posts yet.
+    query: |
+      SELECT 'twitter' AS platform, COUNT(*) AS count
+        FROM twitter_posts WHERE deleted_at IS NULL
+      UNION ALL
+      SELECT 'reddit'  AS platform, COUNT(*) AS count
+        FROM reddit_posts WHERE deleted_at IS NULL
+    chart:
+      kind: donut
+      label: platform
+      value: count
+
+  # ---- Area chart: API usage trend --------------------------------
+  - type: text
+    body: |
+      ## API usage trend
+      Stacked area shows how succeeded / failed / rate-limited calls
+      stack up day by day across both platforms.
+
+  - type: chart
+    title: API calls per day
+    empty_state: No API activity recorded yet.
+    query: |
+      SELECT
+        date AS day,
+        SUM(calls_succeeded)    AS succeeded,
+        SUM(calls_failed)       AS failed,
+        SUM(calls_rate_limited) AS rate_limited
+      FROM (
+        SELECT date, calls_succeeded, calls_failed, calls_rate_limited FROM twitter_api_usage
+        UNION ALL
+        SELECT date, calls_succeeded, calls_failed, calls_rate_limited FROM reddit_api_usage
+      )
+      GROUP BY date
+      ORDER BY date
+      LIMIT 30
+    chart:
+      kind: area
+      x: day
+      y: [succeeded, failed, rate_limited]
+      stacked: true
+      x_format: date
+      y_format: integer
+
+  # ---- Three thirds row: KPI + line + pie -------------------------
+  - type: text
+    body: |
+      ## At a glance
+      Three thirds in one row — KPI with progress, line, donut.
+
+  - type: kpi
+    title: Posts published
+    width: third
+    format: integer
+    target: 10
+    query: |
+      SELECT COUNT(*) AS value FROM (
+        SELECT id FROM twitter_posts WHERE status='published' AND deleted_at IS NULL
+        UNION ALL SELECT id FROM reddit_posts  WHERE status='published' AND deleted_at IS NULL
+      )
+
+  - type: chart
+    title: Reddit refreshes
+    description: Last 7 days
+    width: third
+    empty_state: No recent runs.
+    query: |
+      SELECT
+        date(started_at) AS day,
+        SUM(posts_refreshed) AS refreshed
+      FROM reddit_metrics_runs
+      WHERE started_at >= datetime('now', '-7 days')
+      GROUP BY date(started_at)
+      ORDER BY day
+    chart:
+      kind: line
+      x: day
+      y: [refreshed]
+      x_format: date
+      legend: false
+
+  - type: chart
+    title: Run kinds
+    width: third
+    empty_state: No runs yet.
+    query: |
+      SELECT kind, COUNT(*) AS count FROM (
+        SELECT kind FROM twitter_metrics_runs
+        UNION ALL SELECT kind FROM reddit_metrics_runs
+      )
+      GROUP BY kind
+      ORDER BY count DESC
+    chart:
+      kind: pie
+      label: kind
+      value: count
