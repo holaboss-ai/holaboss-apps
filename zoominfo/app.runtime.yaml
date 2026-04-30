@@ -36,3 +36,28 @@ env_contract:
   - "WORKSPACE_DB_PATH"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_FRONTEND_URL"
+
+# Tier 2 of the workspace data layer. Read-through app: only the
+# audit log is persisted locally; ZoomInfo data is never mirrored
+# (license terms forbid).
+data_schema:
+  version: 1
+  tables:
+    zoominfo_agent_actions:
+      visibility: app_internal
+      columns:
+        id:                 { type: TEXT, primary_key: true }
+        timestamp:          { type: INTEGER, not_null: true }
+        tool_name:          { type: TEXT, not_null: true }
+        args_json:          { type: TEXT, not_null: true }
+        outcome:            { type: TEXT, not_null: true }
+        duration_ms:        { type: INTEGER, not_null: true }
+        zoominfo_object:    { type: TEXT }
+        zoominfo_record_id: { type: TEXT }
+        zoominfo_deep_link: { type: TEXT }
+        result_summary:     { type: TEXT }
+        error_code:         { type: TEXT }
+        error_message:      { type: TEXT }
+      indexes:
+        - { name: idx_zoominfo_agent_actions_timestamp, columns: [timestamp] }
+        - { name: idx_zoominfo_agent_actions_tool,      columns: [tool_name, timestamp] }

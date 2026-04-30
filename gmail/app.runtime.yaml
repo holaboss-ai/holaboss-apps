@@ -43,3 +43,86 @@ env_contract:
   - "WORKSPACE_GOOGLE_INTEGRATION_ID"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"
+
+# Tier 2 of the workspace data layer (see
+# holaOS/docs/plans/2026-04-30-workspace-data-layer-tier2.md). Mirror
+# of src/server/db.ts; runtime applies before app start.
+data_schema:
+  version: 1
+  tables:
+    gmail_drafts:
+      visibility: user_facing
+      columns:
+        id:              { type: TEXT, primary_key: true }
+        to_email:        { type: TEXT, not_null: true }
+        gmail_thread_id: { type: TEXT }
+        subject:         { type: TEXT }
+        body:            { type: TEXT, not_null: true }
+        status:          { type: TEXT, not_null: true, default: "'pending'" }
+        output_id:       { type: TEXT }
+        sent_at:         { type: TEXT }
+        error_message:   { type: TEXT }
+        created_at:      { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:      { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_gmail_drafts_status,    columns: [status] }
+        - { name: idx_gmail_drafts_output_id, columns: [output_id] }
+    gmail_jobs:
+      visibility: app_internal
+      columns:
+        id:            { type: TEXT, primary_key: true }
+        type:          { type: TEXT, not_null: true, default: "'send'" }
+        payload:       { type: TEXT, not_null: true }
+        status:        { type: TEXT, not_null: true, default: "'waiting'" }
+        run_at:        { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        attempts:      { type: INTEGER, not_null: true, default: "0" }
+        max_attempts:  { type: INTEGER, not_null: true, default: "3" }
+        error_message: { type: TEXT }
+        created_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_gmail_jobs_status_run_at, columns: [status, run_at] }
+    gmail_threads:
+      visibility: user_facing
+      columns:
+        thread_id:       { type: TEXT, primary_key: true }
+        history_id:      { type: TEXT }
+        subject:         { type: TEXT }
+        last_from:       { type: TEXT }
+        last_to:         { type: TEXT }
+        last_snippet:    { type: TEXT }
+        message_count:   { type: INTEGER }
+        last_message_at: { type: TEXT }
+        label_ids:       { type: TEXT }
+        synced_at:       { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_gmail_threads_last_at, columns: [last_message_at] }
+        - { name: idx_gmail_threads_subject, columns: [subject] }
+    gmail_sync_runs:
+      visibility: app_internal
+      columns:
+        id:               { type: INTEGER, primary_key: true }
+        started_at:       { type: TEXT, not_null: true }
+        finished_at:      { type: TEXT }
+        kind:             { type: TEXT, not_null: true, default: "'incremental'" }
+        threads_seen:     { type: INTEGER, not_null: true, default: "0" }
+        threads_inserted: { type: INTEGER, not_null: true, default: "0" }
+        threads_updated:  { type: INTEGER, not_null: true, default: "0" }
+        threads_fetched:  { type: INTEGER, not_null: true, default: "0" }
+        errors_json:      { type: TEXT }
+      indexes:
+        - { name: idx_gmail_sync_runs_started, columns: [started_at] }
+    gmail_api_usage:
+      visibility: app_internal
+      columns:
+        date:               { type: TEXT, primary_key: true }
+        calls_succeeded:    { type: INTEGER, not_null: true, default: "0" }
+        calls_failed:       { type: INTEGER, not_null: true, default: "0" }
+        calls_rate_limited: { type: INTEGER, not_null: true, default: "0" }
+        updated_at:         { type: TEXT, not_null: true, default: "(datetime('now'))" }
+    gmail_settings:
+      visibility: app_internal
+      columns:
+        key:        { type: TEXT, primary_key: true }
+        value:      { type: TEXT, not_null: true }
+        updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }
