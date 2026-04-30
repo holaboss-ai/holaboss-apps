@@ -42,3 +42,13 @@ env_contract:
   - "WORKSPACE_GOOGLE_INTEGRATION_ID"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"
+
+# Tier 2 of the workspace data layer.
+data_schema:
+  version: 1
+  tables:
+    sheets_sync_state:
+      visibility: app_internal
+      columns:
+        key:   { type: TEXT, primary_key: true }
+        value: { type: TEXT, not_null: true }

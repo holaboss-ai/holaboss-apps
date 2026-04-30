@@ -41,3 +41,87 @@ env_contract:
   - "WORKSPACE_DB_PATH"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_FRONTEND_URL"
+
+# Tier 2 of the workspace data layer.
+data_schema:
+  version: 1
+  tables:
+    apollo_agent_actions:
+      visibility: app_internal
+      columns:
+        id:               { type: TEXT, primary_key: true }
+        timestamp:        { type: INTEGER, not_null: true }
+        tool_name:        { type: TEXT, not_null: true }
+        args_json:        { type: TEXT, not_null: true }
+        outcome:          { type: TEXT, not_null: true }
+        duration_ms:      { type: INTEGER, not_null: true }
+        apollo_object:    { type: TEXT }
+        apollo_record_id: { type: TEXT }
+        apollo_deep_link: { type: TEXT }
+        result_summary:   { type: TEXT }
+        error_code:       { type: TEXT }
+        error_message:    { type: TEXT }
+      indexes:
+        - { name: idx_apollo_agent_actions_timestamp, columns: [timestamp] }
+        - { name: idx_apollo_agent_actions_tool,      columns: [tool_name, timestamp] }
+    apollo_campaigns:
+      visibility: user_facing
+      columns:
+        record_id:    { type: TEXT, primary_key: true }
+        name:         { type: TEXT }
+        label:        { type: TEXT }
+        status:       { type: TEXT }
+        num_steps:    { type: INTEGER }
+        num_contacts: { type: INTEGER }
+        raw:          { type: TEXT }
+        created_at:   { type: TEXT }
+        updated_at:   { type: TEXT }
+        synced_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_apollo_campaigns_status, columns: [status] }
+    apollo_contacts:
+      visibility: user_facing
+      columns:
+        record_id:    { type: TEXT, primary_key: true }
+        first_name:   { type: TEXT }
+        last_name:    { type: TEXT }
+        email:        { type: TEXT }
+        title:        { type: TEXT }
+        company_name: { type: TEXT }
+        campaign_id:  { type: TEXT }
+        replied:      { type: INTEGER, not_null: true, default: "0" }
+        raw:          { type: TEXT }
+        created_at:   { type: TEXT }
+        updated_at:   { type: TEXT }
+        synced_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_apollo_contacts_email,    columns: [email] }
+        - { name: idx_apollo_contacts_campaign, columns: [campaign_id] }
+    apollo_sync_runs:
+      visibility: app_internal
+      columns:
+        id:               { type: INTEGER, primary_key: true }
+        started_at:       { type: TEXT, not_null: true }
+        finished_at:      { type: TEXT }
+        kind:             { type: TEXT, not_null: true, default: "'incremental'" }
+        object_slug:      { type: TEXT, not_null: true }
+        records_seen:     { type: INTEGER, not_null: true, default: "0" }
+        records_inserted: { type: INTEGER, not_null: true, default: "0" }
+        records_updated:  { type: INTEGER, not_null: true, default: "0" }
+        errors_json:      { type: TEXT }
+      indexes:
+        - { name: idx_apollo_sync_runs_started, columns: [started_at] }
+    apollo_api_usage:
+      visibility: app_internal
+      columns:
+        date:               { type: TEXT, primary_key: true }
+        calls_succeeded:    { type: INTEGER, not_null: true, default: "0" }
+        calls_failed:       { type: INTEGER, not_null: true, default: "0" }
+        calls_rate_limited: { type: INTEGER, not_null: true, default: "0" }
+        updated_at:         { type: TEXT, not_null: true, default: "(datetime('now'))" }
+    apollo_settings:
+      visibility: app_internal
+      columns:
+        key:        { type: TEXT, primary_key: true }
+        value:      { type: TEXT, not_null: true }
+        updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }

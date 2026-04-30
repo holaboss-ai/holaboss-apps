@@ -41,3 +41,77 @@ env_contract:
   - "WORKSPACE_DB_PATH"
   - "HOLABOSS_USER_ID"
   - "HOLABOSS_FRONTEND_URL"
+
+# Tier 2 of the workspace data layer.
+data_schema:
+  version: 1
+  tables:
+    calcom_agent_actions:
+      visibility: app_internal
+      columns:
+        id:               { type: TEXT, primary_key: true }
+        timestamp:        { type: INTEGER, not_null: true }
+        tool_name:        { type: TEXT, not_null: true }
+        args_json:        { type: TEXT, not_null: true }
+        outcome:          { type: TEXT, not_null: true }
+        duration_ms:      { type: INTEGER, not_null: true }
+        calcom_object:    { type: TEXT }
+        calcom_record_id: { type: TEXT }
+        calcom_deep_link: { type: TEXT }
+        result_summary:   { type: TEXT }
+        error_code:       { type: TEXT }
+        error_message:    { type: TEXT }
+      indexes:
+        - { name: idx_calcom_agent_actions_timestamp, columns: [timestamp] }
+        - { name: idx_calcom_agent_actions_tool,      columns: [tool_name, timestamp] }
+    calcom_bookings:
+      visibility: user_facing
+      columns:
+        uid:                 { type: TEXT, primary_key: true }
+        title:               { type: TEXT }
+        description:         { type: TEXT }
+        status:              { type: TEXT }
+        event_type_id:       { type: INTEGER }
+        event_type_slug:     { type: TEXT }
+        start_time:          { type: TEXT }
+        end_time:            { type: TEXT }
+        duration_minutes:    { type: INTEGER }
+        attendees_json:      { type: TEXT }
+        meeting_url:         { type: TEXT }
+        cancellation_reason: { type: TEXT }
+        rescheduled:         { type: INTEGER, not_null: true, default: "0" }
+        raw:                 { type: TEXT }
+        created_at:          { type: TEXT }
+        updated_at:          { type: TEXT }
+        synced_at:           { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_calcom_bookings_status, columns: [status] }
+        - { name: idx_calcom_bookings_start,  columns: [start_time] }
+        - { name: idx_calcom_bookings_synced, columns: [synced_at] }
+    calcom_sync_runs:
+      visibility: app_internal
+      columns:
+        id:                { type: INTEGER, primary_key: true }
+        started_at:        { type: TEXT, not_null: true }
+        finished_at:       { type: TEXT }
+        kind:              { type: TEXT, not_null: true, default: "'incremental'" }
+        bookings_seen:     { type: INTEGER, not_null: true, default: "0" }
+        bookings_inserted: { type: INTEGER, not_null: true, default: "0" }
+        bookings_updated:  { type: INTEGER, not_null: true, default: "0" }
+        errors_json:       { type: TEXT }
+      indexes:
+        - { name: idx_calcom_sync_runs_started, columns: [started_at] }
+    calcom_api_usage:
+      visibility: app_internal
+      columns:
+        date:               { type: TEXT, primary_key: true }
+        calls_succeeded:    { type: INTEGER, not_null: true, default: "0" }
+        calls_failed:       { type: INTEGER, not_null: true, default: "0" }
+        calls_rate_limited: { type: INTEGER, not_null: true, default: "0" }
+        updated_at:         { type: TEXT, not_null: true, default: "(datetime('now'))" }
+    calcom_settings:
+      visibility: app_internal
+      columns:
+        key:        { type: TEXT, primary_key: true }
+        value:      { type: TEXT, not_null: true }
+        updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }

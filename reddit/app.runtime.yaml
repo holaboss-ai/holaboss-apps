@@ -46,3 +46,113 @@ env_contract:
   - "WORKSPACE_REDDIT_INTEGRATION_ID"
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"
+
+# Tier 2 of the workspace data layer (see
+# holaOS/docs/plans/2026-04-30-workspace-data-layer-tier2.md). Reddit
+# uses milestone-based monitoring rather than tier scheduling, so
+# reddit_posts carries more lifecycle columns than twitter/linkedin.
+data_schema:
+  version: 1
+  tables:
+    reddit_posts:
+      visibility: user_facing
+      columns:
+        id:                      { type: TEXT, primary_key: true }
+        title:                   { type: TEXT, not_null: true, default: "''" }
+        content:                 { type: TEXT, not_null: true, default: "''" }
+        subreddit:               { type: TEXT, not_null: true, default: "''" }
+        status:                  { type: TEXT, not_null: true, default: "'draft'" }
+        output_id:               { type: TEXT }
+        external_post_id:        { type: TEXT }
+        scheduled_at:            { type: TEXT }
+        published_at:            { type: TEXT }
+        error_message:           { type: TEXT }
+        source_url:              { type: TEXT }
+        monitoring_started_at:   { type: TEXT }
+        monitoring_completed_at: { type: TEXT }
+        final_score:             { type: INTEGER }
+        final_num_comments:      { type: INTEGER }
+        final_upvote_ratio:      { type: REAL }
+        views:                   { type: INTEGER }
+        deleted_at:              { type: TEXT }
+        deleted_reason:          { type: TEXT }
+        deleted_reason_raw:      { type: TEXT }
+        created_at:              { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:              { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_reddit_posts_status,     columns: [status] }
+        - { name: idx_reddit_posts_created_at, columns: [created_at] }
+        - { name: idx_reddit_posts_output_id,  columns: [output_id] }
+        - name: idx_reddit_posts_monitoring
+          columns: [monitoring_started_at]
+          where: "source_url IS NOT NULL AND deleted_at IS NULL AND monitoring_completed_at IS NULL"
+        - name: idx_reddit_posts_source_url
+          columns: [source_url]
+          unique: true
+          where: "source_url IS NOT NULL"
+    reddit_jobs:
+      visibility: app_internal
+      columns:
+        id:            { type: TEXT, primary_key: true }
+        type:          { type: TEXT, not_null: true, default: "'publish'" }
+        payload:       { type: TEXT, not_null: true }
+        status:        { type: TEXT, not_null: true, default: "'waiting'" }
+        run_at:        { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        attempts:      { type: INTEGER, not_null: true, default: "0" }
+        max_attempts:  { type: INTEGER, not_null: true, default: "3" }
+        error_message: { type: TEXT }
+        created_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+        updated_at:    { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_reddit_jobs_status_run_at, columns: [status, run_at] }
+    reddit_post_metrics:
+      visibility: user_facing
+      columns:
+        post_id:       { type: TEXT, not_null: true }
+        captured_at:   { type: TEXT, not_null: true }
+        score:         { type: INTEGER }
+        num_comments:  { type: INTEGER }
+        upvote_ratio:  { type: REAL }
+        milestone_idx: { type: INTEGER }
+        raw:           { type: TEXT }
+      primary_key: [post_id, captured_at]
+      indexes:
+        - { name: idx_reddit_post_metrics_captured, columns: [captured_at] }
+    reddit_post_metrics_daily:
+      visibility: user_facing
+      columns:
+        post_id:      { type: TEXT, not_null: true }
+        day:          { type: TEXT, not_null: true }
+        score:        { type: INTEGER }
+        num_comments: { type: INTEGER }
+        upvote_ratio: { type: REAL }
+      primary_key: [post_id, day]
+    reddit_metrics_runs:
+      visibility: app_internal
+      columns:
+        id:               { type: INTEGER, primary_key: true }
+        started_at:       { type: TEXT, not_null: true }
+        finished_at:      { type: TEXT }
+        kind:             { type: TEXT, not_null: true, default: "'refresh'" }
+        posts_considered: { type: INTEGER, not_null: true, default: "0" }
+        posts_refreshed:  { type: INTEGER, not_null: true, default: "0" }
+        posts_skipped:    { type: INTEGER, not_null: true, default: "0" }
+        posts_deleted:    { type: INTEGER, not_null: true, default: "0" }
+        posts_completed:  { type: INTEGER, not_null: true, default: "0" }
+        errors_json:      { type: TEXT }
+      indexes:
+        - { name: idx_reddit_metrics_runs_started, columns: [started_at] }
+    reddit_api_usage:
+      visibility: app_internal
+      columns:
+        date:               { type: TEXT, primary_key: true }
+        calls_succeeded:    { type: INTEGER, not_null: true, default: "0" }
+        calls_failed:       { type: INTEGER, not_null: true, default: "0" }
+        calls_rate_limited: { type: INTEGER, not_null: true, default: "0" }
+        updated_at:         { type: TEXT, not_null: true, default: "(datetime('now'))" }
+    reddit_settings:
+      visibility: app_internal
+      columns:
+        key:        { type: TEXT, primary_key: true }
+        value:      { type: TEXT, not_null: true }
+        updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }
