@@ -1,0 +1,92 @@
+title: Reddit deep dive
+description: Single-platform showcase — board with stage colors, KPI delta + target, link templates.
+
+panels:
+  # KPI strip with one panel showing target progress (Notion / Linear style)
+  - type: kpi
+    title: Posts published
+    width: third
+    format: integer
+    target: 10
+    query: |
+      SELECT COUNT(*) AS value FROM reddit_posts
+      WHERE status='published' AND deleted_at IS NULL
+
+  - type: kpi
+    title: Posts in monitoring
+    width: third
+    format: integer
+    query: |
+      SELECT COUNT(*) AS value FROM reddit_posts
+      WHERE source_url IS NOT NULL
+        AND deleted_at IS NULL
+        AND monitoring_completed_at IS NULL
+
+  - type: kpi
+    title: API calls today
+    width: third
+    format: integer
+    query: |
+      SELECT COALESCE(calls_succeeded, 0) AS value
+      FROM reddit_api_usage
+      WHERE date = date('now')
+    delta_query: |
+      SELECT COALESCE(calls_succeeded, 0) AS value
+      FROM reddit_api_usage
+      WHERE date = date('now', '-1 day')
+
+  - type: text
+    body: |
+      ## All posts by status
+      Same set of rows shown three ways. The board view groups by
+      `status` with explicit colors that match the table chips —
+      consistent visual language across views is what makes Notion
+      feel coherent.
+
+  - type: data_view
+    title: All Reddit posts
+    empty_state: No reddit posts yet — start one in the chat.
+    query: |
+      SELECT
+        id,
+        substr(COALESCE(NULLIF(title,''), '(untitled)'), 1, 80) AS title,
+        substr(COALESCE(content,''), 1, 120) AS content,
+        subreddit,
+        status,
+        published_at,
+        source_url
+      FROM reddit_posts
+      WHERE deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 100
+    views:
+      - type: table
+        columns:
+          - { name: title,        label: Title }
+          - name: subreddit
+            label: Subreddit
+            colors: {}
+          - name: status
+            colors:
+              draft:     gray
+              scheduled: blue
+              published: green
+              failed:    red
+          - { name: published_at, format: datetime, width: 170 }
+          - { name: source_url,   format: url, label: Open }
+      - type: board
+        group_by: status
+        card_title: title
+        card_subtitle: subreddit
+        card_meta: published_at
+        group_order: [draft, scheduled, published, failed]
+        group_colors:
+          draft:     gray
+          scheduled: blue
+          published: green
+          failed:    red
+      - type: list
+        primary: title
+        secondary: subreddit
+        meta: published_at
+    default_view: board
