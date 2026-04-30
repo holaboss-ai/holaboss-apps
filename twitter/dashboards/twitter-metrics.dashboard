@@ -2,7 +2,6 @@ title: Twitter Metrics
 description: Engagement across published posts, refreshed every 5 minutes by the in-process scheduler.
 
 panels:
-  # ---- Headline numbers (Notion-style stat strip) ----------------
   - type: stat_grid
     title: At a glance
     columns: 4
@@ -38,7 +37,6 @@ panels:
           FROM twitter_api_usage
           WHERE date = date('now', '-1 day')
 
-  # ---- Top posts (table + board switchable) ----------------------
   - type: data_view
     title: Top posts (last 7 days)
     description: Sorted by impressions
@@ -99,16 +97,10 @@ panels:
         meta: published_at
     default_view: table
 
-  # ---- Section header ---------------------------------------------
   - type: text
     body: |
       ## Operations
 
-      Background scheduler activity and connection health. These rows
-      come from `twitter_metrics_runs` and `twitter_api_usage` — they
-      reset daily.
-
-  # ---- Recent runs (table only) -----------------------------------
   - type: data_view
     title: Recent scheduler runs
     empty_state: No metrics runs yet. The scheduler boots ~15s after the app starts.

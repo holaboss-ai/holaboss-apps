@@ -1,10 +1,6 @@
-title: Content — full v2 showcase
-description: Every new dashboard component on one page. Live data from twitter + reddit.
+title: Content overview
 
 panels:
-  # ------------------------------------------------------------------
-  # 1. STAT_GRID — bordered surface, 4 KPIs, one with Δ delta chip
-  # ------------------------------------------------------------------
   - type: stat_grid
     title: This week
     columns: 4
@@ -46,23 +42,6 @@ panels:
           FROM reddit_api_usage
           WHERE date = date('now', '-1 day')
 
-  # ------------------------------------------------------------------
-  # 2. TEXT — markdown prose between data panels (Notion-page style)
-  # ------------------------------------------------------------------
-  - type: text
-    body: |
-      ## Highlights
-
-      Below: a single `data_view` rendered three different ways. The view
-      tabs in the top-right of each panel switch the layout — same row
-      set, different lens. **Watch the indicator pill animate** when you
-      click between table, board, and list.
-
-  # ------------------------------------------------------------------
-  # 3. DATA_VIEW with three switchable views (table / board / list)
-  #    Demonstrates: column formats, color chips, board with group
-  #    colors + card_meta, list with primary/secondary/meta.
-  # ------------------------------------------------------------------
   - type: data_view
     title: All published content
     description: Twitter + Reddit, sorted newest first
@@ -116,15 +95,9 @@ panels:
         meta: published_at
     default_view: table
 
-  # ------------------------------------------------------------------
-  # 4. SIDE-BY-SIDE — width: half lays out two panels in one row
-  # ------------------------------------------------------------------
   - type: text
     body: |
       ## Operations
-
-      Two scheduler activity tables side-by-side. Each panel sets
-      `width: half` so they share a row.
 
   - type: data_view
     title: Twitter scheduler runs
@@ -179,15 +152,9 @@ panels:
           - { name: posts_refreshed,  format: integer, align: right, label: Refreshed }
           - { name: posts_skipped,    format: integer, align: right, label: Skipped }
 
-  # ------------------------------------------------------------------
-  # 5. SECTION BREAK + final list view
-  # ------------------------------------------------------------------
   - type: text
     body: |
       ## Recent activity
-
-      A compact `list` view — denser than table, no header row.
-      Good for the "stream of recent things" pattern.
 
   - type: data_view
     title: Last 20 agent actions
