@@ -55,11 +55,26 @@ panels:
       LIMIT 200
     views:
       - type: table
-        columns: [subreddit, title, milestone, captured_at, upvotes, comments, upvote_ratio, status, url]
+        columns:
+          - { name: subreddit }
+          - { name: title }
+          - { name: milestone,    format: integer, align: right }
+          - { name: captured_at,  format: datetime }
+          - { name: upvotes,      format: integer, align: right }
+          - { name: comments,     format: integer, align: right }
+          - { name: upvote_ratio, format: percent, align: right }
+          - name: status
+            colors:
+              live: green
+              removed: gray
+          - { name: url, format: url, label: Open }
       - type: board
         group_by: status
         card_title: title
         card_subtitle: captured_at
+        group_colors:
+          live: green
+          removed: gray
     default_view: table
 
   - type: data_view
