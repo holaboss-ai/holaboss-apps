@@ -20,7 +20,7 @@ export function getDb(): Database.Database {
   }
 
   renameLegacyTablesIfNeeded(db)
-  ensureSchema(db)
+  ensureSchemaFallback(db)
   return db
 }
 
@@ -79,14 +79,20 @@ function renameLegacyTablesIfNeeded(db: Database.Database): void {
   renameIfNeeded("jobs", "twitter_jobs")
 }
 
-function ensureSchema(db: Database.Database): void {
-  // Step 1 — tables. Tables only; indexes deferred so they can reference
-  // newly-added columns from the ALTER step below.
-  //
-  // Metrics tables (post_metrics / post_metrics_daily / metrics_runs /
-  // api_usage) follow the cross-platform convention documented in
-  // holaOS/docs/plans/2026-04-28-post-metrics-convention.md. LinkedIn /
-  // Reddit will create the same shape under their own prefix.
+// Schema is now owned by the runtime (Tier 2 of the workspace data
+// layer plan). The runtime parses `data_schema:` from app.runtime.yaml
+// and runs CREATE TABLE / ALTER TABLE before this process spawns, so
+// getDb() opens a database whose tables already exist.
+//
+// We still call ensureSchemaFallback() as a safety net for the case
+// where someone runs this app standalone (e.g. `npm run dev`) outside
+// a Holaboss workspace, or under an older runtime that doesn't yet
+// understand `data_schema:`. The shape it creates matches the
+// manifest exactly. Once Tier 2 is the only supported runtime path
+// we can delete this function entirely.
+function ensureSchemaFallback(db: Database.Database): void {
+  // Step 1 — tables. Each is CREATE TABLE IF NOT EXISTS so re-running
+  // against a Tier 2-managed DB is a no-op.
   db.exec(`
     CREATE TABLE IF NOT EXISTS twitter_posts (
       id TEXT PRIMARY KEY,
@@ -96,11 +102,11 @@ function ensureSchema(db: Database.Database): void {
       external_post_id TEXT,
       scheduled_at TEXT,
       published_at TEXT,
+      deleted_at TEXT,
       error_message TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-
     CREATE TABLE IF NOT EXISTS twitter_jobs (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL DEFAULT 'publish',
@@ -113,73 +119,55 @@ function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-
     CREATE TABLE IF NOT EXISTS twitter_post_metrics (
-      post_id     TEXT NOT NULL,
-      captured_at TEXT NOT NULL,
-      impressions INTEGER,
-      likes       INTEGER,
-      comments    INTEGER,
-      shares      INTEGER,
-      bookmarks   INTEGER,
-      raw         TEXT,
-      PRIMARY KEY (post_id, captured_at)
+      post_id TEXT NOT NULL, captured_at TEXT NOT NULL,
+      impressions INTEGER, likes INTEGER, comments INTEGER, shares INTEGER, bookmarks INTEGER,
+      raw TEXT, PRIMARY KEY (post_id, captured_at)
     );
-
     CREATE TABLE IF NOT EXISTS twitter_post_metrics_daily (
-      post_id     TEXT NOT NULL,
-      day         TEXT NOT NULL,
-      impressions INTEGER,
-      likes       INTEGER,
-      comments    INTEGER,
-      shares      INTEGER,
-      bookmarks   INTEGER,
+      post_id TEXT NOT NULL, day TEXT NOT NULL,
+      impressions INTEGER, likes INTEGER, comments INTEGER, shares INTEGER, bookmarks INTEGER,
       PRIMARY KEY (post_id, day)
     );
-
     CREATE TABLE IF NOT EXISTS twitter_metrics_runs (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      started_at       TEXT NOT NULL,
-      finished_at      TEXT,
-      kind             TEXT NOT NULL DEFAULT 'refresh',
-      posts_considered INTEGER NOT NULL DEFAULT 0,
-      posts_refreshed  INTEGER NOT NULL DEFAULT 0,
-      posts_skipped    INTEGER NOT NULL DEFAULT 0,
-      posts_deleted    INTEGER NOT NULL DEFAULT 0,
-      errors_json      TEXT
+      id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT,
+      kind TEXT NOT NULL DEFAULT 'refresh',
+      posts_considered INTEGER NOT NULL DEFAULT 0, posts_refreshed INTEGER NOT NULL DEFAULT 0,
+      posts_skipped INTEGER NOT NULL DEFAULT 0, posts_deleted INTEGER NOT NULL DEFAULT 0,
+      errors_json TEXT
     );
-
     CREATE TABLE IF NOT EXISTS twitter_api_usage (
-      date               TEXT PRIMARY KEY,
-      calls_succeeded    INTEGER NOT NULL DEFAULT 0,
-      calls_failed       INTEGER NOT NULL DEFAULT 0,
+      date TEXT PRIMARY KEY,
+      calls_succeeded INTEGER NOT NULL DEFAULT 0, calls_failed INTEGER NOT NULL DEFAULT 0,
       calls_rate_limited INTEGER NOT NULL DEFAULT 0,
-      updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS twitter_settings (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
 
-  // Step 2 — columns. Backfill columns that pre-rename / cross-file
-  // migrations may have skipped. Each ALTER is gated by a PRAGMA check.
-  // The shape mirrors the canonical CREATE TABLE above so the column
-  // set is consistent regardless of how the table was first created
-  // (fresh, in-place rename from `posts`, or cross-file ATTACH copy).
-  const ensureColumn = (column: string, type: string) => {
+  // Step 2 — backfill columns that a pre-Tier-2 in-place migration may
+  // have skipped. Each ALTER is gated by a PRAGMA check. Must run
+  // before the indexes below because some of them reference these
+  // columns. Tier 2 runtime applies these via the data_schema diff
+  // before this fallback runs, so this is only load-bearing for
+  // standalone (npm run dev) and pre-Tier-2 setups.
+  for (const [column, type] of [
+    ["output_id", "TEXT"],
+    ["external_post_id", "TEXT"],
+    ["scheduled_at", "TEXT"],
+    ["published_at", "TEXT"],
+    ["error_message", "TEXT"],
+    ["deleted_at", "TEXT"],
+  ] as const) {
     if (!hasColumn(db, "twitter_posts", column)) {
       db.exec(`ALTER TABLE twitter_posts ADD COLUMN ${column} ${type}`)
     }
   }
-  ensureColumn("output_id", "TEXT")
-  ensureColumn("external_post_id", "TEXT")
-  ensureColumn("scheduled_at", "TEXT")
-  ensureColumn("published_at", "TEXT")
-  ensureColumn("error_message", "TEXT")
-  // Set when Composio returns 404 for a previously-published post —
-  // the platform-side row is gone but we keep the local row + its
-  // historical metrics. Tier policy treats deleted_at IS NOT NULL as
-  // frozen.
-  ensureColumn("deleted_at", "TEXT")
 
-  // Step 3 — indexes. Safe to reference any column at this point.
+  // Step 3 — indexes. Safe now that all referenced columns exist.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_twitter_posts_status ON twitter_posts(status);
     CREATE INDEX IF NOT EXISTS idx_twitter_posts_created_at ON twitter_posts(created_at);
@@ -188,10 +176,8 @@ function ensureSchema(db: Database.Database): void {
       ON twitter_posts(published_at)
       WHERE status = 'published' AND deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_twitter_jobs_status_run_at ON twitter_jobs(status, run_at);
-    CREATE INDEX IF NOT EXISTS idx_twitter_post_metrics_captured
-      ON twitter_post_metrics(captured_at);
-    CREATE INDEX IF NOT EXISTS idx_twitter_metrics_runs_started
-      ON twitter_metrics_runs(started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_twitter_post_metrics_captured ON twitter_post_metrics(captured_at);
+    CREATE INDEX IF NOT EXISTS idx_twitter_metrics_runs_started ON twitter_metrics_runs(started_at);
   `)
 }
 

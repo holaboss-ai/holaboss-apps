@@ -271,9 +271,10 @@ export async function refreshPostMetrics(
 }
 
 // Settings stored in the same workspace db as everything else, so a
-// tool toggle survives restarts and is visible to dashboards.
+// tool toggle survives restarts and is visible to dashboards. The
+// twitter_settings table is declared in app.runtime.yaml's
+// data_schema and created by the runtime — no lazy CREATE here.
 export function isMetricsRefreshEnabled(): boolean {
-  ensureSettingsTable(getDb())
   const row = getDb()
     .prepare(
       "SELECT value FROM twitter_settings WHERE key = 'metrics_refresh_enabled'",
@@ -284,23 +285,13 @@ export function isMetricsRefreshEnabled(): boolean {
 }
 
 export function setMetricsRefreshEnabled(enabled: boolean): void {
-  const db = getDb()
-  ensureSettingsTable(db)
-  db.prepare(
-    `INSERT INTO twitter_settings (key, value, updated_at)
-     VALUES ('metrics_refresh_enabled', ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
-  ).run(enabled ? "1" : "0")
-}
-
-function ensureSettingsTable(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS twitter_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `)
+  getDb()
+    .prepare(
+      `INSERT INTO twitter_settings (key, value, updated_at)
+       VALUES ('metrics_refresh_enabled', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    )
+    .run(enabled ? "1" : "0")
 }
 
 function loadCandidates(
