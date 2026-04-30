@@ -1,11 +1,9 @@
-title: Charts — every kind on one page
-description: line / bar / area / pie / donut against live workspace data.
+title: Charts
 
 panels:
-  # ---- Line chart: scheduler activity over the last 14 days -------
   - type: chart
     title: Twitter scheduler activity
-    description: Daily run counts, last 14 days
+    description: Last 14 days
     empty_state: Scheduler hasn't run yet today.
     query: |
       SELECT
@@ -24,10 +22,8 @@ panels:
       x_format: date
       y_format: integer
 
-  # ---- Bar + Pie side by side (width: half) -----------------------
   - type: chart
     title: Posts by status
-    description: All platforms combined
     width: half
     empty_state: No posts yet.
     query: |
@@ -58,13 +54,6 @@ panels:
       label: platform
       value: count
 
-  # ---- Area chart: API usage trend --------------------------------
-  - type: text
-    body: |
-      ## API usage trend
-      Stacked area shows how succeeded / failed / rate-limited calls
-      stack up day by day across both platforms.
-
   - type: chart
     title: API calls per day
     empty_state: No API activity recorded yet.
@@ -89,12 +78,6 @@ panels:
       stacked: true
       x_format: date
       y_format: integer
-
-  # ---- Three thirds row: KPI + line + pie -------------------------
-  - type: text
-    body: |
-      ## At a glance
-      Three thirds in one row — KPI with progress, line, donut.
 
   - type: kpi
     title: Posts published

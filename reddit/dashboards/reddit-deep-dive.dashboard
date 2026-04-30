@@ -1,8 +1,6 @@
 title: Reddit deep dive
-description: Single-platform showcase — board with stage colors, KPI delta + target, link templates.
 
 panels:
-  # KPI strip with one panel showing target progress (Notion / Linear style)
   - type: kpi
     title: Posts published
     width: third
@@ -34,14 +32,6 @@ panels:
       SELECT COALESCE(calls_succeeded, 0) AS value
       FROM reddit_api_usage
       WHERE date = date('now', '-1 day')
-
-  - type: text
-    body: |
-      ## All posts by status
-      Same set of rows shown three ways. The board view groups by
-      `status` with explicit colors that match the table chips —
-      consistent visual language across views is what makes Notion
-      feel coherent.
 
   - type: data_view
     title: All Reddit posts
