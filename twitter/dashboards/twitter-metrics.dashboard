@@ -2,46 +2,56 @@ title: Twitter Metrics
 description: Engagement across published posts, refreshed every 5 minutes by the in-process scheduler.
 
 panels:
-  - type: kpi
-    title: Total Impressions
-    query: |
-      SELECT COALESCE(SUM(latest), 0) AS value FROM (
-        SELECT MAX(impressions) AS latest
-        FROM twitter_post_metrics
-        GROUP BY post_id
-      )
+  # ---- Headline numbers (Notion-style stat strip) ----------------
+  - type: stat_grid
+    title: At a glance
+    columns: 4
+    stats:
+      - label: Total Impressions
+        format: integer
+        query: |
+          SELECT COALESCE(SUM(latest), 0) AS value FROM (
+            SELECT MAX(impressions) AS latest
+            FROM twitter_post_metrics
+            GROUP BY post_id
+          )
+      - label: Total Likes
+        format: integer
+        query: |
+          SELECT COALESCE(SUM(latest), 0) AS value FROM (
+            SELECT MAX(likes) AS latest
+            FROM twitter_post_metrics
+            GROUP BY post_id
+          )
+      - label: Posts tracked
+        format: integer
+        query: |
+          SELECT COUNT(DISTINCT post_id) AS value FROM twitter_post_metrics
+      - label: API calls today
+        format: integer
+        query: |
+          SELECT COALESCE(calls_succeeded, 0) AS value
+          FROM twitter_api_usage
+          WHERE date = date('now')
+        delta_query: |
+          SELECT COALESCE(calls_succeeded, 0) AS value
+          FROM twitter_api_usage
+          WHERE date = date('now', '-1 day')
 
-  - type: kpi
-    title: Total Likes
-    query: |
-      SELECT COALESCE(SUM(latest), 0) AS value FROM (
-        SELECT MAX(likes) AS latest
-        FROM twitter_post_metrics
-        GROUP BY post_id
-      )
-
-  - type: kpi
-    title: Posts tracked
-    query: |
-      SELECT COUNT(DISTINCT post_id) AS value FROM twitter_post_metrics
-
-  - type: kpi
-    title: API calls today
-    query: |
-      SELECT COALESCE(calls_succeeded, 0) AS value
-      FROM twitter_api_usage
-      WHERE date = date('now')
-
+  # ---- Top posts (table + board switchable) ----------------------
   - type: data_view
     title: Top posts (last 7 days)
+    description: Sorted by impressions
+    empty_state: No posts in the last 7 days yet. Publish something and the metrics scheduler will fill this in.
     query: |
       SELECT
         substr(p.content, 1, 100) AS content,
-        p.status                 AS status,
+        p.status                  AS status,
         COALESCE(m.impressions, 0) AS impressions,
         COALESCE(m.likes, 0)       AS likes,
         COALESCE(m.comments, 0)    AS comments,
-        COALESCE(m.shares, 0)      AS shares
+        COALESCE(m.shares, 0)      AS shares,
+        p.published_at             AS published_at
       FROM twitter_posts p
       LEFT JOIN (
         SELECT
@@ -60,15 +70,48 @@ panels:
       LIMIT 25
     views:
       - type: table
-        columns: [content, status, impressions, likes, comments, shares]
+        columns:
+          - { name: content,      label: Post }
+          - name: status
+            colors:
+              published: green
+              scheduled: blue
+              draft: gray
+              failed: red
+          - { name: impressions,  format: integer, align: right }
+          - { name: likes,        format: integer, align: right }
+          - { name: comments,     format: integer, align: right }
+          - { name: shares,       format: integer, align: right }
+          - { name: published_at, format: datetime, width: 160 }
       - type: board
         group_by: status
         card_title: content
-        card_subtitle: impressions
+        card_subtitle: published_at
+        card_meta: impressions
+        group_colors:
+          published: green
+          scheduled: blue
+          draft: gray
+          failed: red
+      - type: list
+        primary: content
+        secondary: status
+        meta: published_at
     default_view: table
 
+  # ---- Section header ---------------------------------------------
+  - type: text
+    body: |
+      ## Operations
+
+      Background scheduler activity and connection health. These rows
+      come from `twitter_metrics_runs` and `twitter_api_usage` — they
+      reset daily.
+
+  # ---- Recent runs (table only) -----------------------------------
   - type: data_view
     title: Recent scheduler runs
+    empty_state: No metrics runs yet. The scheduler boots ~15s after the app starts.
     query: |
       SELECT
         started_at,
@@ -86,4 +129,14 @@ panels:
       LIMIT 25
     views:
       - type: table
-        columns: [started_at, kind, posts_considered, posts_refreshed, posts_skipped, posts_deleted, errors]
+        columns:
+          - { name: started_at,       format: datetime, width: 160 }
+          - name: kind
+            colors:
+              refresh: blue
+              rollup:  purple
+          - { name: posts_considered, format: integer, align: right }
+          - { name: posts_refreshed,  format: integer, align: right }
+          - { name: posts_skipped,    format: integer, align: right }
+          - { name: posts_deleted,    format: integer, align: right }
+          - { name: errors,           label: Errors }
