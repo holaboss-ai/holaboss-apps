@@ -12,8 +12,8 @@ importers:
         specifier: ^5.2.10
         version: 5.2.10
       '@holaboss/bridge':
-        specifier: 0.1.1-beta.1
-        version: 0.1.1-beta.1
+        specifier: 0.2.0-beta.1
+        version: 0.2.0-beta.1(better-sqlite3@12.8.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@3.25.76)
@@ -572,9 +572,14 @@ packages:
   '@fontsource-variable/figtree@5.2.10':
     resolution: {integrity: sha512-a5Gumbpy3mdd+Yg31g6Qb7CmjYbrfyutJa3bWfP5q8A4GclIOwX7mI+ZuSHsJnw/mHvW6r9oh1AHJcJTIxK4JA==}
 
-  '@holaboss/bridge@0.1.1-beta.1':
-    resolution: {integrity: sha512-WE0SQrzrK8IxyCl7/YjZ0YOuOwtanA6V95NT03v25NvGv1f4RDah0J/N1/mcTU2yliWZB5ApAu08kmMJsaK9ew==}
+  '@holaboss/bridge@0.2.0-beta.1':
+    resolution: {integrity: sha512-9h/K6+NS4hsraD5ToKgfUkxoVy7Yxcvu8omzqXwaJsclP8WhCCeuX5h7bI85N9ilyc38eTWa+erNwDnNXd31ZQ==}
     engines: {node: '>=20'}
+    peerDependencies:
+      better-sqlite3: ^12
+    peerDependenciesMeta:
+      better-sqlite3:
+        optional: true
 
   '@hono/node-server@1.19.13':
     resolution: {integrity: sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ==}
@@ -5131,7 +5136,9 @@ snapshots:
 
   '@fontsource-variable/figtree@5.2.10': {}
 
-  '@holaboss/bridge@0.1.1-beta.1': {}
+  '@holaboss/bridge@0.2.0-beta.1(better-sqlite3@12.8.0)':
+    optionalDependencies:
+      better-sqlite3: 12.8.0
 
   '@hono/node-server@1.19.13(hono@4.12.12)':
     dependencies:
