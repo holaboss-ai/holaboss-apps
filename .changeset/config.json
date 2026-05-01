@@ -9,7 +9,6 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "module-template",
-    "apollo",
     "attio",
     "calcom",
     "create-hola-app",

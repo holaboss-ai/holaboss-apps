@@ -7,5 +7,11 @@
   "printWidth": 80,
   "plugins": ["prettier-plugin-tailwindcss"],
   "tailwindStylesheet": "src/styles.css",
-  "tailwindFunctions": ["cn", "cva"]
+  "tailwindFunctions": ["cn", "cva"],
+  "overrides": [
+    {
+      "files": "CHANGELOG.md",
+      "options": { "plugins": [] }
+    }
+  ]
 }
