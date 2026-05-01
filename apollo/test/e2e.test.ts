@@ -27,7 +27,7 @@ describe("Apollo Module E2E", () => {
       user: { email: "user@acme.com" },
       team: { name: "Acme Sales" },
     })
-    bridge.whenPost("/mixed_people/search").respond(200, {
+    bridge.whenPost("/mixed_people/api_search").respond(200, {
       people: [
         { id: "p_e2e_1", first_name: "Jane", last_name: "Smith", title: "VP Engineering" },
       ],

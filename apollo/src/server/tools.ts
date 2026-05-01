@@ -42,7 +42,8 @@ function n(v: unknown): number | null {
 
 function normalizePerson(raw: Record<string, unknown>): PersonSummary {
   const org = (raw.organization as Record<string, unknown> | undefined) ?? undefined
-  const fallbackName = [s(raw.first_name), s(raw.last_name)].filter(Boolean).join(" ").trim()
+  const lastNameForDisplay = s(raw.last_name) ?? s(raw.last_name_obfuscated)
+  const fallbackName = [s(raw.first_name), lastNameForDisplay].filter(Boolean).join(" ").trim()
   const name = s(raw.name) ?? (fallbackName || null)
   return {
     id: s(raw.id) ?? "",
@@ -206,17 +207,26 @@ export async function searchPeopleImpl(
     people?: Array<Record<string, unknown>>
     contacts?: Array<Record<string, unknown>>
     pagination?: unknown
-  }>("/mixed_people/search", body)
+    total_entries?: number
+  }>("/mixed_people/api_search", body)
   if (!r.ok) return r
   const rawPeople = (r.data.people ?? r.data.contacts ?? []) as Array<Record<string, unknown>>
   const people = rawPeople.map(normalizePerson)
+  const perPage = body.per_page as number
+  const totalEntries = typeof r.data.total_entries === "number" ? r.data.total_entries : undefined
+  const pagination = r.data.pagination ?? {
+    page: body.page,
+    per_page: perPage,
+    total_entries: totalEntries,
+    total_pages: totalEntries && perPage ? Math.ceil(totalEntries / perPage) : undefined,
+  }
   return {
     ok: true,
     data: {
       people,
-      pagination: normalizePagination(r.data.pagination),
+      pagination: normalizePagination(pagination),
       apollo_object: "people",
-      result_summary: `Found ${people.length} people`,
+      result_summary: `Found ${people.length} people (preview — last names obfuscated; use /people/match to enrich)`,
     },
   }
 }

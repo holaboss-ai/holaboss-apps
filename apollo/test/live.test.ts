@@ -12,7 +12,7 @@
  *
  * NOTE on Apollo plan tiers: Apollo's REST surface is heavily gated by plan.
  * Free / starter keys hit "is not accessible with this api_key" on
- * /mixed_people/search, /mixed_companies/search, /emailer_campaigns/search,
+ * /mixed_people/api_search, /mixed_companies/search, /emailer_campaigns/search,
  * and /emailer_messages/search. Sequence write endpoints additionally require
  * a master API key. We treat those failures as ENVIRONMENTAL (plan gate, not
  * a bug) and let the test pass with a console note — that way CI on a free

@@ -12,8 +12,8 @@ describe("apollo_search_people", () => {
     setBridgeClient(bridge.asClient())
   })
 
-  it("hits POST /mixed_people/search and forwards filters", async () => {
-    bridge.whenPost("/mixed_people/search").respond(200, {
+  it("hits POST /mixed_people/api_search and forwards filters", async () => {
+    bridge.whenPost("/mixed_people/api_search").respond(200, {
       people: [
         {
           id: "p_1",
@@ -36,7 +36,7 @@ describe("apollo_search_people", () => {
     })
 
     expect(r.ok).toBe(true)
-    expect(bridge.calls[0].endpoint).toContain("/mixed_people/search")
+    expect(bridge.calls[0].endpoint).toContain("/mixed_people/api_search")
     const sentBody = bridge.calls[0].body as Record<string, unknown>
     expect(sentBody.person_titles).toEqual(["VP Engineering"])
     expect(sentBody.q_organization_domains_list).toEqual(["acme.com"])
@@ -53,14 +53,14 @@ describe("apollo_search_people", () => {
   })
 
   it("clamps per_page to 100 when caller asks for more", async () => {
-    bridge.whenPost("/mixed_people/search").respond(200, { people: [] })
+    bridge.whenPost("/mixed_people/api_search").respond(200, { people: [] })
     await searchPeopleImpl({ per_page: 500 })
     const sentBody = bridge.calls[0].body as Record<string, unknown>
     expect(sentBody.per_page).toBe(100)
   })
 
   it("returns email=null when Apollo omits it (free-tier behavior)", async () => {
-    bridge.whenPost("/mixed_people/search").respond(200, {
+    bridge.whenPost("/mixed_people/api_search").respond(200, {
       people: [{ id: "p_1", first_name: "Jane", last_name: "Smith" }],
     })
     const r = await searchPeopleImpl({})
@@ -70,7 +70,7 @@ describe("apollo_search_people", () => {
 
   it("propagates rate_limited errors", async () => {
     bridge
-      .whenPost("/mixed_people/search")
+      .whenPost("/mixed_people/api_search")
       .respond(429, {}, { "retry-after": "60" })
     const r = await searchPeopleImpl({})
     expect(r.ok).toBe(false)
