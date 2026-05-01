@@ -41,7 +41,7 @@ jobs:
           # `LEGACY_MODULES` is what `v*` lockstep tags still build. Once a
           # module migrates to changesets it MUST be removed from this list,
           # otherwise a stray `v*` tag will double-build it.
-          LEGACY_MODULES: "linkedin,reddit,gmail,github,sheets,calcom,attio,apollo,zoominfo,instantly,hubspot"
+          LEGACY_MODULES: "linkedin,reddit,gmail,github,sheets,calcom,attio,zoominfo,instantly,hubspot"
           ALL_TARGETS: "linux-x64,darwin-arm64,win32-x64"
         run: |
           REF="${GITHUB_REF#refs/tags/}"
