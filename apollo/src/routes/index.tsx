@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { createServerFn } from "@tanstack/react-start"
+
+import { ActivityFeed } from "@/components/activity-feed"
+import { ConnectionAlert, ConnectionBadge } from "@/components/connection-status"
+import type { AgentActionRecord } from "@/lib/types"
 import { listRecentActions } from "../server/audit"
-import { ConnectionStatusBar } from "../components/connection-status-bar"
-import { ActivityFeed } from "../components/activity-feed"
-import type { AgentActionRecord } from "../lib/types"
 
 const loadFeed = createServerFn({ method: "GET" }).handler(async () => {
   return { actions: listRecentActions({ limit: 100 }) as AgentActionRecord[] }
@@ -17,14 +18,17 @@ export const Route = createFileRoute("/")({
 function ApolloHome() {
   const { actions } = Route.useLoaderData()
   return (
-    <main className="mx-auto min-h-screen max-w-5xl">
-      <header className="px-6 pt-8 pb-2">
-        <h1 className="text-xl font-semibold">Apollo</h1>
-        <p className="text-sm text-muted-foreground">
-          Agent activity feed · pure proxy to your Apollo.io account
-        </p>
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-6 py-10">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Apollo</h1>
+          <p className="text-sm text-muted-foreground">
+            Pure proxy to your Apollo.io account.
+          </p>
+        </div>
+        <ConnectionBadge />
       </header>
-      <ConnectionStatusBar />
+      <ConnectionAlert />
       <ActivityFeed initial={actions} />
     </main>
   )
