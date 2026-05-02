@@ -14,6 +14,7 @@ import { Route as ThreadsThreadIdRouteImport } from './routes/threads.$threadId'
 import { Route as DraftsDraftIdRouteImport } from './routes/drafts.$draftId'
 import { Route as ApiMcpRouteImport } from './routes/api/mcp'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiTriggersNewMessageRouteImport } from './routes/api/triggers/new-message'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,6 +41,11 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTriggersNewMessageRoute = ApiTriggersNewMessageRouteImport.update({
+  id: '/api/triggers/new-message',
+  path: '/api/triggers/new-message',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/api/mcp': typeof ApiMcpRoute
   '/drafts/$draftId': typeof DraftsDraftIdRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/api/triggers/new-message': typeof ApiTriggersNewMessageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/api/mcp': typeof ApiMcpRoute
   '/drafts/$draftId': typeof DraftsDraftIdRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/api/triggers/new-message': typeof ApiTriggersNewMessageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,6 +70,7 @@ export interface FileRoutesById {
   '/api/mcp': typeof ApiMcpRoute
   '/drafts/$draftId': typeof DraftsDraftIdRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/api/triggers/new-message': typeof ApiTriggersNewMessageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -71,6 +80,7 @@ export interface FileRouteTypes {
     | '/api/mcp'
     | '/drafts/$draftId'
     | '/threads/$threadId'
+    | '/api/triggers/new-message'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -78,6 +88,7 @@ export interface FileRouteTypes {
     | '/api/mcp'
     | '/drafts/$draftId'
     | '/threads/$threadId'
+    | '/api/triggers/new-message'
   id:
     | '__root__'
     | '/'
@@ -85,6 +96,7 @@ export interface FileRouteTypes {
     | '/api/mcp'
     | '/drafts/$draftId'
     | '/threads/$threadId'
+    | '/api/triggers/new-message'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -93,6 +105,7 @@ export interface RootRouteChildren {
   ApiMcpRoute: typeof ApiMcpRoute
   DraftsDraftIdRoute: typeof DraftsDraftIdRoute
   ThreadsThreadIdRoute: typeof ThreadsThreadIdRoute
+  ApiTriggersNewMessageRoute: typeof ApiTriggersNewMessageRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -132,6 +145,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/triggers/new-message': {
+      id: '/api/triggers/new-message'
+      path: '/api/triggers/new-message'
+      fullPath: '/api/triggers/new-message'
+      preLoaderRoute: typeof ApiTriggersNewMessageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -141,6 +161,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiMcpRoute: ApiMcpRoute,
   DraftsDraftIdRoute: DraftsDraftIdRoute,
   ThreadsThreadIdRoute: ThreadsThreadIdRoute,
+  ApiTriggersNewMessageRoute: ApiTriggersNewMessageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

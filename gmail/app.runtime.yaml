@@ -126,3 +126,30 @@ data_schema:
         key:        { type: TEXT, primary_key: true }
         value:      { type: TEXT, not_null: true }
         updated_at: { type: TEXT, not_null: true, default: "(datetime('now'))" }
+    gmail_inbound_events:
+      visibility: user_facing
+      columns:
+        id:              { type: INTEGER, primary_key: true }
+        trigger_id:      { type: TEXT, not_null: true }
+        message_id:      { type: TEXT }
+        thread_id:       { type: TEXT }
+        sender:          { type: TEXT }
+        subject:         { type: TEXT }
+        preview_text:    { type: TEXT }
+        label_ids:       { type: TEXT }
+        message_at:      { type: TEXT }
+        payload_json:    { type: TEXT, not_null: true }
+        received_at:     { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_gmail_inbound_received, columns: [received_at] }
+        - { name: idx_gmail_inbound_thread,   columns: [thread_id] }
+
+# Composio inbound triggers — runtime calls Composio triggers.create()
+# at install / .delete() at uninstall, persisted via _app_trigger_subscriptions
+# in workspace data.db. Polling-backed; default 1-minute interval.
+triggers:
+  - slug: GMAIL_NEW_GMAIL_MESSAGE
+    handler: /api/triggers/new-message
+    config:
+      labelIds: INBOX
+      interval: 1

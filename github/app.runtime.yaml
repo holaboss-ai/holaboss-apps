@@ -37,3 +37,32 @@ env_contract:
   - "HOLABOSS_INTEGRATION_BROKER_URL"
   - "HOLABOSS_APP_GRANT"
   - "WORKSPACE_DB_PATH"
+
+# Composio inbound triggers — runtime calls Composio triggers.create()
+# at install / .delete() at uninstall, persisted via _app_trigger_subscriptions
+# in workspace data.db. Handler runs as a regular TanStack Start API route.
+triggers:
+  - slug: GITHUB_PULL_REQUEST_EVENT
+    handler: /api/triggers/pr-event
+    config: {}
+
+# Tier 2 — runtime applies before app start.
+data_schema:
+  version: 1
+  tables:
+    github_pr_events:
+      visibility: user_facing
+      columns:
+        id:           { type: INTEGER, primary_key: true }
+        trigger_id:   { type: TEXT, not_null: true }
+        repo:         { type: TEXT, not_null: true }
+        pr_number:    { type: INTEGER, not_null: true }
+        action:       { type: TEXT, not_null: true }
+        title:        { type: TEXT }
+        author:       { type: TEXT }
+        url:          { type: TEXT }
+        payload_json: { type: TEXT, not_null: true }
+        received_at:  { type: TEXT, not_null: true, default: "(datetime('now'))" }
+      indexes:
+        - { name: idx_github_pr_events_received, columns: [received_at] }
+        - { name: idx_github_pr_events_repo,     columns: [repo, pr_number] }
